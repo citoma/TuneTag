@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TuneTag UI Prototype</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
+    .bar { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid #e5e7eb; background: #fff; }
+    .btn { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 8px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+    .btn.active { background: #0058bc; border-color: #0058bc; color: #fff; }
+    .tip { margin-left: auto; font-size: 12px; color: #6b7280; }
+    iframe { border: 0; width: 100%; height: calc(100% - 52px); display: block; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <button id="empty-btn" class="btn active">空状态</button>
+    <button id="work-btn" class="btn">主工作区</button>
+    <span class="tip">原型预览：先看空状态，点击“选择文件”或拖拽后切主工作区</span>
+  </div>
+  <iframe id="frame" src="./empty-state.html" title="TuneTag Prototype"></iframe>
+
+  <script>
+    const frame = document.getElementById('frame');
+    const emptyBtn = document.getElementById('empty-btn');
+    const workBtn = document.getElementById('work-btn');
+
+    function setView(type) {
+      const isEmpty = type === 'empty';
+      frame.src = isEmpty ? './empty-state.html' : './workspace.html';
+      emptyBtn.classList.toggle('active', isEmpty);
+      workBtn.classList.toggle('active', !isEmpty);
+    }
+
+    emptyBtn.addEventListener('click', () => setView('empty'));
+    workBtn.addEventListener('click', () => setView('work'));
+
+    frame.addEventListener('load', () => {
+      try {
+        const doc = frame.contentWindow.document;
+        const drop = doc.getElementById('drop-zone');
+        if (!drop) return;
+
+        ['dragenter', 'dragover'].forEach((eventName) => {
+          drop.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            drop.classList.add('ring-2', 'ring-primary', 'ring-offset-4');
+          });
+        });
+
+        ['dragleave', 'drop'].forEach((eventName) => {
+          drop.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            drop.classList.remove('ring-2', 'ring-primary', 'ring-offset-4');
+            if (eventName === 'drop') setView('work');
+          });
+        });
+
+        const btn = Array.from(doc.querySelectorAll('button')).find((el) => el.textContent.includes('选择文件'));
+        if (btn) btn.addEventListener('click', () => setView('work'));
+      } catch (_) {
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/master.swiftdeps"
+  },
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/Sources/TuneTagApp/main.swift": {
+    "dependencies": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.d",
+    "object": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swift.o",
+    "swiftmodule": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swiftdeps",
+    "diagnostics": "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.dia"
+  }
+}

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html class="light" lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: '#0058bc',
+            'primary-container': '#0070eb',
+            background: '#f9f9fb',
+            surface: '#f9f9fb',
+            'surface-container-low': '#f3f3f5',
+            'on-surface': '#1a1c1d',
+            'on-surface-variant': '#414755',
+            outline: '#717786',
+            'outline-variant': '#c1c6d7',
+            'secondary-container': '#a1befd'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    .dashed-border {
+      background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect width='100%25' height='100%25' fill='none' rx='16' ry='16' stroke='%23C1C6D7FF' stroke-width='2' stroke-dasharray='8%2c 12' stroke-dashoffset='0' stroke-linecap='square'/%3e%3c/svg%3e");
+      border-radius: 16px;
+    }
+  </style>
+</head>
+<body class="bg-background text-on-surface font-['Inter'] antialiased min-h-screen flex flex-col">
+  <nav class="flex justify-between items-center px-6 w-full sticky top-0 z-50 bg-slate-50/70 backdrop-blur-3xl shadow-sm h-12 tracking-tight">
+    <div class="flex items-center gap-2">
+      <span class="text-lg font-semibold text-slate-900">TuneTag</span>
+    </div>
+  </nav>
+
+  <main class="flex-grow flex items-center justify-center p-6">
+    <div class="max-w-xl w-full flex flex-col items-center">
+      <div id="drop-zone" class="w-full aspect-[16/10] dashed-border flex flex-col items-center justify-center relative group">
+        <div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl"></div>
+        <div class="relative z-10 flex flex-col items-center space-y-6">
+          <div class="w-20 h-20 bg-surface-container-low rounded-2xl flex items-center justify-center shadow-sm">
+            <span class="material-symbols-outlined text-4xl text-outline-variant">upload_file</span>
+          </div>
+          <div class="text-center space-y-2">
+            <h1 class="text-2xl font-bold tracking-tight text-on-surface">准备好编辑了吗？</h1>
+            <p class="text-on-surface-variant text-base">拖入媒体文件或文件夹开始工作</p>
+          </div>
+          <button class="mt-4 px-8 py-2.5 bg-gradient-to-br from-primary to-primary-container text-white rounded-xl font-medium text-sm shadow-md active:scale-95 transition-all duration-200 flex items-center gap-2">
+            <span class="material-symbols-outlined text-lg">add</span>
+            选择文件
+          </button>
+        </div>
+      </div>
+
+      <div class="mt-8 flex gap-8 items-center text-outline text-xs tracking-wide">
+        <div class="flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-sm">audio_file</span>
+          <span>支持 MP3, FLAC, WAV</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-sm">folder_zip</span>
+          <span>支持批量导入</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="fixed -bottom-24 -left-24 w-96 h-96 bg-primary/5 rounded-full blur-[120px] pointer-events-none"></div>
+  <div class="fixed top-24 -right-24 w-64 h-64 bg-secondary-container/10 rounded-full blur-[100px] pointer-events-none"></div>
+</body>
+</html>

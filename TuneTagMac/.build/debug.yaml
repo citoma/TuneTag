@@ -1,0 +1,81 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "TuneTagApp-arm64-apple-macosx26.0-debug.exe": ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe>"]
+  "TuneTagApp-arm64-apple-macosx26.0-debug.module": ["<TuneTagApp-arm64-apple-macosx26.0-debug.module>"]
+  "main": ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe>","<TuneTagApp-arm64-apple-macosx26.0-debug.module>"]
+  "test": ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe>","<TuneTagApp-arm64-apple-macosx26.0-debug.module>"]
+default: "main"
+nodes:
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/Sources/TuneTagApp/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp":
+    is-mutated: true
+commands:
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp-entitlement.plist":
+    tool: write-auxiliary-file
+    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp-entitlement.plist"]
+    description: "Write auxiliary file /Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp-entitlement.plist"
+
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/chunfeng/Documents/TuneTag/TuneTagMac/Sources/TuneTagApp/main.swift"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/sources"]
+    description: "Write auxiliary file /Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/sources"
+
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swift.o"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.product/Objects.LinkFileList"
+
+  "/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Library/Developer/CommandLineTools/usr/bin/swiftc"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+
+  "<TuneTagApp-arm64-apple-macosx26.0-debug.exe>":
+    tool: phony
+    inputs: ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe-CodeSigning>"]
+    outputs: ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe>"]
+
+  "<TuneTagApp-arm64-apple-macosx26.0-debug.module>":
+    tool: phony
+    inputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swift.o","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/Modules/TuneTagApp.swiftmodule"]
+    outputs: ["<TuneTagApp-arm64-apple-macosx26.0-debug.module>"]
+
+  "C.TuneTagApp-arm64-apple-macosx26.0-debug.exe":
+    tool: shell
+    inputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swift.o","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.product/Objects.LinkFileList"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp"]
+    description: "Linking ./.build/arm64-apple-macosx/debug/TuneTagApp"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-L","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug","-o","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp","-module-name","TuneTagApp","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_TuneTagApp_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-Xlinker","-add_ast_path","-Xlinker","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/Modules/TuneTagApp.swiftmodule","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g"]
+
+  "C.TuneTagApp-arm64-apple-macosx26.0-debug.exe-entitlements":
+    tool: shell
+    inputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp-entitlement.plist"]
+    outputs: ["<TuneTagApp-arm64-apple-macosx26.0-debug.exe-CodeSigning>"]
+    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/TuneTagApp"
+    args: ["codesign","--force","--sign","-","--entitlements","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp-entitlement.plist","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp"]
+
+  "C.TuneTagApp-arm64-apple-macosx26.0-debug.module":
+    tool: shell
+    inputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/Sources/TuneTagApp/main.swift","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/sources"]
+    outputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/main.swift.o","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/Modules/TuneTagApp.swiftmodule"]
+    description: "Compiling Swift Module 'TuneTagApp' (1 sources)"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-module-name","TuneTagApp","-emit-dependencies","-emit-module","-emit-module-path","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/Modules/TuneTagApp.swiftmodule","-output-file-map","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/output-file-map.json","-incremental","-c","@/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/TuneTagApp.build/sources","-I","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx13.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j10","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/chunfeng/Documents/TuneTag/TuneTagMac/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","TuneTagApp_main","-parse-as-library","-swift-version","6","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g","-Xcc","-isysroot","-Xcc","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-Xcc","-fPIC","-Xcc","-g","-package-name","tunetagmac"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/chunfeng/Documents/TuneTag/TuneTagMac/Sources/TuneTagApp/","/Users/chunfeng/Documents/TuneTag/TuneTagMac/Package.swift","/Users/chunfeng/Documents/TuneTag/TuneTagMac/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+
