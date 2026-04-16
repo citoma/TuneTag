@@ -227,7 +227,8 @@ function statusLabel(track: Track) {
 
 function App() {
   const api = window.tunetag;
-  const { tracks, selectedIds, appendTracks, setSelectedIds, updateTrack, bulkUpdate, removeTracks, resetDirty, markSaveResult } = useStore();
+  const isMac = navigator.userAgent.toLowerCase().includes('mac');
+  const { tracks, originals, selectedIds, appendTracks, setSelectedIds, updateTrack, bulkUpdate, removeTracks, resetDirty, markSaveResult } = useStore();
 
   const [sortKey, setSortKey] = useState<SortKey>('fileName');
   const [sortAsc, setSortAsc] = useState(true);
@@ -394,8 +395,14 @@ function App() {
 
   function applyBatch() {
     if (!selectedIds.length) return;
-    const allowSource = selectedTracks.some((track) => Boolean(track.rawWOAS?.trim()));
-    const allowNote = selectedTracks.some((track) => Boolean(track.rawCOMM?.trim()));
+    const allowSource = selectedTracks.some((track) => {
+      const original = originals[track.id];
+      return Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
+    });
+    const allowNote = selectedTracks.some((track) => {
+      const original = originals[track.id];
+      return Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
+    });
     const normalized: BatchForm = {
       title: batchForm.title.trim(),
       artist: batchForm.artist.trim(),
@@ -513,7 +520,7 @@ function App() {
   function renderEmpty() {
     return (
       <div
-        className={`shell ${dragging ? 'dragging-shell' : ''}`}
+        className={`shell ${isMac ? 'macos-shell' : ''} ${dragging ? 'dragging-shell' : ''}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -522,7 +529,7 @@ function App() {
         onDrop={onDropFiles}
       >
         <header className="topbar">
-          <h1>TuneTag</h1>
+          <h1>乐签 TuneTag</h1>
         </header>
         <main className="empty-main">
           <div
@@ -543,7 +550,7 @@ function App() {
           >
             <div className="drop-card">
               <div className="drop-icon">📁</div>
-              <h2>准备好编辑了吗？</h2>
+              <h2>音乐标签修改大师</h2>
               <p>拖入媒体文件或文件夹开始工作</p>
               <button className="primary" onClick={onPickFiles}>选择文件</button>
             </div>
@@ -552,6 +559,7 @@ function App() {
             <span>支持 MP3 / FLAC / WAV / M4A</span>
             <span>支持批量导入</span>
           </div>
+          <div className="landing-brand">奇趣实验室 出品</div>
         </main>
       </div>
     );
@@ -559,8 +567,9 @@ function App() {
 
   function renderSingleEditor(track: Track) {
     const rules = getEditableRules(track);
-    const showSourceField = Boolean(track.rawWOAS?.trim());
-    const showNoteField = Boolean(track.rawCOMM?.trim());
+    const original = originals[track.id];
+    const showSourceField = Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
+    const showNoteField = Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
     const coverSrc = track.removeCover
       ? ''
       : track.coverPath
@@ -646,8 +655,14 @@ function App() {
   }
 
   function renderBatchEditor() {
-    const showBatchSourceField = selectedTracks.some((track) => Boolean(track.rawWOAS?.trim()));
-    const showBatchNoteField = selectedTracks.some((track) => Boolean(track.rawCOMM?.trim()));
+    const showBatchSourceField = selectedTracks.some((track) => {
+      const original = originals[track.id];
+      return Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
+    });
+    const showBatchNoteField = selectedTracks.some((track) => {
+      const original = originals[track.id];
+      return Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
+    });
     return (
       <div className="panel-group">
         <h3>批量编辑（可编辑标签）</h3>
@@ -690,7 +705,7 @@ function App() {
   function renderWorkspace() {
     return (
       <div
-        className={`shell ${dragging ? 'dragging-shell' : ''}`}
+        className={`shell ${isMac ? 'macos-shell' : ''} ${dragging ? 'dragging-shell' : ''}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -699,7 +714,7 @@ function App() {
         onDrop={onDropFiles}
       >
         <header className="topbar">
-          <h1>TuneTag</h1>
+          <h1>乐签 TuneTag</h1>
           <div className="actions">
             <button className="ghost" onClick={onPickFiles}>继续导入</button>
             <button className="ghost" disabled={!selectedIds.length || saving} onClick={onRemoveSelected}>
@@ -724,42 +739,44 @@ function App() {
               </label>
             </div>
 
-            <table>
-              <thead>
-                <tr>
-                  <th></th>
-                  <th onClick={() => toggleSort('fileName')}>文件名</th>
-                  <th onClick={() => toggleSort('artist')}>艺术家</th>
-                  <th onClick={() => toggleSort('album')}>专辑</th>
-                  <th onClick={() => toggleSort('year')}>年份</th>
-                  <th onClick={() => toggleSort('status')}>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSorted.map((track) => {
-                  const selected = selectedSet.has(track.id);
-                  return (
-                    <tr key={track.id} className={selected ? 'selected' : ''} onClick={() => selectOnly(track.id)}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={(e) => toggleRow(track.id, e.target.checked)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </td>
-                      <td title={track.fileName}>{track.fileName}</td>
-                      <td title={track.artist}>{track.artist}</td>
-                      <td title={track.album}>{track.album}</td>
-                      <td>{track.year}</td>
-                      <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : ''}>
-                        {statusLabel(track)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th onClick={() => toggleSort('fileName')}>文件名</th>
+                    <th onClick={() => toggleSort('artist')}>艺术家</th>
+                    <th onClick={() => toggleSort('album')}>专辑</th>
+                    <th onClick={() => toggleSort('year')}>年份</th>
+                    <th onClick={() => toggleSort('status')}>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSorted.map((track) => {
+                    const selected = selectedSet.has(track.id);
+                    return (
+                      <tr key={track.id} className={selected ? 'selected' : ''} onClick={() => selectOnly(track.id)}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={(e) => toggleRow(track.id, e.target.checked)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </td>
+                        <td title={track.fileName}>{track.fileName}</td>
+                        <td title={track.artist}>{track.artist}</td>
+                        <td title={track.album}>{track.album}</td>
+                        <td>{track.year}</td>
+                        <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : ''}>
+                          {statusLabel(track)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <aside className="side-pane">

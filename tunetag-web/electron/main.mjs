@@ -24,6 +24,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     title: 'TuneTag',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -563,6 +564,7 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
 
   await probeMedia(item.path);
 
+  const tempPath = buildTempOutputPath(targetPath);
   const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', item.path];
   const ext = path.extname(targetPath).toLowerCase();
   const coverPath = typeof item.coverPath === 'string' ? item.coverPath.trim() : '';
@@ -588,15 +590,22 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
     args.push('-id3v2_version', '3', '-write_id3v1', '0');
   }
 
-  args.push(targetPath);
-  await runProcess(ffmpegPath, args);
+  args.push(tempPath);
+  try {
+    await runProcess(ffmpegPath, args);
+    await fs.rename(tempPath, targetPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function writeMp3WithNodeId3ToTarget(item, targetPath) {
-  await fs.copyFile(item.path, targetPath);
+  const tempPath = buildTempOutputPath(targetPath);
+  await fs.copyFile(item.path, tempPath);
 
   if (item.removeCover) {
-    NodeID3.removeTags(targetPath);
+    NodeID3.removeTags(tempPath);
   }
 
   const tags = {
@@ -616,10 +625,12 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
     tags.image = item.coverPath;
   }
 
-  const ok = NodeID3.update(tags, targetPath);
+  const ok = NodeID3.update(tags, tempPath);
   if (!ok) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
     throw new Error('MP3 标签写入失败');
   }
+  await fs.rename(tempPath, targetPath);
 }
 
 async function resolveUniqueOutputPath(directory, baseName) {
@@ -635,6 +646,31 @@ async function resolveUniqueOutputPath(directory, baseName) {
     } catch {
       return candidate;
     }
+  }
+}
+
+function buildTempOutputPath(targetPath) {
+  const dir = path.dirname(targetPath);
+  const ext = path.extname(targetPath);
+  const name = path.basename(targetPath, ext);
+  return path.join(
+    dir,
+    `${name}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`
+  );
+}
+
+async function isSameFilePath(a, b) {
+  if (!a || !b) return false;
+  try {
+    const [ra, rb] = await Promise.all([fs.realpath(a), fs.realpath(b)]);
+    return ra === rb;
+  } catch {
+    const pa = path.resolve(a);
+    const pb = path.resolve(b);
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      return pa.toLowerCase() === pb.toLowerCase();
+    }
+    return pa === pb;
   }
 }
 
@@ -687,7 +723,11 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
 
   for (const item of tracks || []) {
     const ext = path.extname(item.path || '').toLowerCase();
-    const outputPath = await resolveUniqueOutputPath(targetDirectory, path.basename(item.path || 'untitled'));
+    let outputPath = await resolveUniqueOutputPath(targetDirectory, path.basename(item.path || 'untitled'));
+    if (await isSameFilePath(item.path || '', outputPath)) {
+      const parsed = path.parse(path.basename(item.path || 'untitled'));
+      outputPath = await resolveUniqueOutputPath(targetDirectory, `${parsed.name} (copy)${parsed.ext}`);
+    }
 
     if (!WRITABLE_EXTENSIONS.has(ext)) {
       failures.push({ path: item.path, reason: `${ext || '该格式'} 暂不支持写入` });
