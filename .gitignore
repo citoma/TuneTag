@@ -26,3 +26,7 @@ coverage/
 # Editor
 .vscode/
 .idea/
+
+# SwiftPM build artifacts
+TuneTagMac/.build/
+TuneTagMac/.swiftpm/
