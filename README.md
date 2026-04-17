@@ -26,12 +26,17 @@ open release/TuneTag-darwin-arm64/TuneTag.app
 
 ## 界面预览
 
-> 你可以把截图放到 `docs/screenshots/`，然后替换下面路径。
+### Logo
 
-```md
-![空状态](docs/screenshots/empty.png)
-![主工作区](docs/screenshots/workspace.png)
-```
+![TuneTag Logo](docs/screenshot/logo.png)
+
+### 空状态
+
+![空状态](docs/screenshot/empty.png)
+
+### 主工作区
+
+![主工作区](docs/screenshot/workspace.png)
 
 ## 产品定位
 

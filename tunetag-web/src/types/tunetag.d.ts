@@ -9,11 +9,15 @@ export type Track = {
   artist: string;
   album: string;
   year: string;
+  genre: string;
+  lyrics: string;
   note: string;
   trackNo: string;
   source: string;
   rawTIT2: string;
   rawTPE1: string;
+  rawTCON: string;
+  rawUSLT: string;
   rawCOMM: string;
   rawWOAS: string;
   codec: string;
@@ -25,6 +29,7 @@ export type Track = {
   hasEmbeddedCover: boolean;
   embeddedCoverDataUrl: string;
   embeddedCoverPath: string;
+  coverDataUrl: string;
   coverPath: string;
   removeCover: boolean;
   rawAttributes: Array<{ key: string; value: string }>;
@@ -43,6 +48,7 @@ declare global {
     tunetag: {
       pickPaths: () => Promise<string[]>;
       pickCoverImage: () => Promise<string>;
+      readImageDataUrl: (filePath: string) => Promise<string>;
       getPathForFile: (file: File) => string;
       importPaths: (paths: string[]) => Promise<ImportResult>;
       openExternalUrl: (url: string) => Promise<boolean>;
@@ -52,7 +58,7 @@ declare global {
         embeddedCoverDataUrl: string;
       }>;
       saveTracks: (
-        tracks: Array<Pick<Track, 'path' | 'title' | 'artist' | 'album' | 'year' | 'note' | 'source' | 'trackNo' | 'coverPath' | 'removeCover' | 'rawTIT2' | 'rawTPE1' | 'rawCOMM' | 'rawWOAS'>>
+        tracks: Array<Pick<Track, 'path' | 'title' | 'artist' | 'album' | 'year' | 'genre' | 'lyrics' | 'note' | 'source' | 'trackNo' | 'coverPath' | 'removeCover' | 'rawTIT2' | 'rawTPE1' | 'rawTCON' | 'rawUSLT' | 'rawCOMM' | 'rawWOAS'>>
       ) => Promise<{
         canceled: boolean;
         targetDirectory?: string;

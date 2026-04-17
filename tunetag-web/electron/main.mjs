@@ -13,6 +13,7 @@ const SUPPORTED_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const WRITABLE_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const FFPROBE_PATH = ffprobeStatic?.path;
 const WAV_SOURCE_PREFIX = '[TuneTagSource] ';
+const WAV_META_PREFIX = '[TuneTagMeta] ';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -182,7 +183,7 @@ function toTrackNo(track) {
 function readCommentTag(parsed) {
   const common = parsed?.common ?? {};
   if (Array.isArray(common.comment) && common.comment.length) {
-    const value = String(common.comment[0] ?? '').trim();
+    const value = toDisplayValue(common.comment[0]);
     if (value) return value;
   }
 
@@ -240,18 +241,51 @@ function readNativeFirst(parsed, ids) {
   return '';
 }
 
+function normalizeTagText(value) {
+  if (value == null) return '';
+  return String(value)
+    .replace(/\u0000/g, '')
+    .trim()
+    .normalize('NFC');
+}
+
+function decodeBufferToText(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return '';
+  const hasUtf16Bom =
+    buffer.length >= 2 &&
+    ((buffer[0] === 0xff && buffer[1] === 0xfe) || (buffer[0] === 0xfe && buffer[1] === 0xff));
+  try {
+    if (hasUtf16Bom) {
+      return normalizeTagText(buffer.toString('utf16le'));
+    }
+    return normalizeTagText(buffer.toString('utf8'));
+  } catch {
+    return '';
+  }
+}
+
 function toDisplayValue(value) {
   if (value == null) return '';
-  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'string') return normalizeTagText(value);
+  if (Buffer.isBuffer(value)) return decodeBufferToText(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) return value.map((item) => toDisplayValue(item)).filter(Boolean).join(', ');
   if (typeof value === 'object') {
-    if (typeof value.text === 'string') return value.text.trim();
+    if (typeof value.text === 'string') return normalizeTagText(value.text);
     if (typeof value.no === 'number' && typeof value.of === 'number') return `${value.no}/${value.of}`;
     if (typeof value.no === 'number') return String(value.no);
     return '';
   }
   return '';
+}
+
+function readCommonText(common, key) {
+  const raw = common?.[key];
+  if (Array.isArray(raw)) {
+    if (!raw.length) return '';
+    return toDisplayValue(raw[0]);
+  }
+  return toDisplayValue(raw);
 }
 
 function pictureToDataUrl(picture) {
@@ -307,6 +341,25 @@ async function getEmbeddedCoverPreview(filePath) {
   }
 }
 
+async function readImageAsDataUrl(filePath) {
+  if (!filePath || typeof filePath !== 'string') return '';
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp'
+    };
+    const mime = mimeMap[ext];
+    if (!mime) return '';
+    const bytes = await fs.readFile(filePath);
+    return `data:${mime};base64,${bytes.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
 function buildRawAttributes(parsed, stat, filePath, sourceTag) {
   const common = parsed?.common ?? {};
   const formatInfo = parsed?.format ?? {};
@@ -324,6 +377,8 @@ function buildRawAttributes(parsed, stat, filePath, sourceTag) {
   push('专辑', common.album);
   push('年份', common.year);
   push('曲目号', toTrackNo(common.track));
+  push('流派', Array.isArray(common.genre) ? common.genre[0] : '');
+  push('歌词', Array.isArray(common.lyrics) ? common.lyrics[0] : '');
   push('注释', Array.isArray(common.comment) ? common.comment[0] : '');
   push('格式', path.extname(filePath).replace('.', '').toUpperCase());
   push('编码', formatInfo.codec);
@@ -356,7 +411,26 @@ function buildRawAttributes(parsed, stat, filePath, sourceTag) {
 function parseWavCommentAndSource(rawComment) {
   const text = toDisplayValue(rawComment);
   if (!text) {
-    return { note: '', source: '' };
+    return { note: '', source: '', genre: '', lyrics: '' };
+  }
+
+  const metaLine = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(WAV_META_PREFIX));
+
+  if (metaLine) {
+    try {
+      const payload = JSON.parse(Buffer.from(metaLine.slice(WAV_META_PREFIX.length).trim(), 'base64').toString('utf8'));
+      return {
+        note: normalizeTagText(payload?.note),
+        source: normalizeTagText(payload?.source),
+        genre: normalizeTagText(payload?.genre),
+        lyrics: normalizeTagText(payload?.lyrics)
+      };
+    } catch {
+      // fallback to legacy format
+    }
   }
 
   const lines = text
@@ -368,12 +442,27 @@ function parseWavCommentAndSource(rawComment) {
   const source = sourceLine.slice(WAV_SOURCE_PREFIX.length).trim();
   const note = lines.filter((line) => !line.startsWith(WAV_SOURCE_PREFIX)).join('\n').trim();
 
-  return { note, source };
+  return { note, source, genre: '', lyrics: '' };
 }
 
-function composeWavComment(note, source) {
+function composeWavComment(note, source, genre = '', lyrics = '') {
   const noteText = toDisplayValue(note);
   const sourceText = toDisplayValue(source);
+  const genreText = toDisplayValue(genre);
+  const lyricsText = toDisplayValue(lyrics);
+
+  const hasExtended = Boolean(sourceText || genreText || lyricsText);
+  if (hasExtended) {
+    const payload = {
+      note: noteText,
+      source: sourceText,
+      genre: genreText,
+      lyrics: lyricsText
+    };
+    const base64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+    return `${WAV_META_PREFIX}${base64}`;
+  }
+
   if (!sourceText) return noteText;
   if (!noteText) return `${WAV_SOURCE_PREFIX}${sourceText}`;
 
@@ -410,6 +499,8 @@ async function probeWavTags(filePath) {
     artist: get('artist'),
     album: get('album'),
     year: get('date', 'year'),
+    genre: get('genre'),
+    lyrics: get('lyrics', 'lyric', 'comment'),
     comment: get('comment', 'description'),
     trackNo: get('track')
   };
@@ -432,18 +523,31 @@ async function readMetadata(filePath) {
     const fallbackComment = readCommentTag(parsed);
     const wavComment = wavTags?.comment || '';
     const wavParsed = parseWavCommentAndSource(wavComment);
-    const resolvedTitle = ext === '.wav' ? (wavTags?.title || common.title || '') : (common.title || '');
-    const resolvedArtist = ext === '.wav' ? (wavTags?.artist || common.artist || '') : (common.artist || '');
-    const resolvedAlbum = ext === '.wav' ? (wavTags?.album || common.album || '') : (common.album || '');
+    const commonTitle = readCommonText(common, 'title');
+    const commonArtist = readCommonText(common, 'artist');
+    const commonAlbum = readCommonText(common, 'album');
+    const commonGenre = readCommonText(common, 'genre');
+    const commonLyrics = readCommonText(common, 'lyrics');
+    const resolvedTitle = ext === '.wav' ? (wavTags?.title || commonTitle || '') : (commonTitle || '');
+    const resolvedArtist = ext === '.wav' ? (wavTags?.artist || commonArtist || '') : (commonArtist || '');
+    const resolvedAlbum = ext === '.wav' ? (wavTags?.album || commonAlbum || '') : (commonAlbum || '');
     const resolvedYear =
       ext === '.wav'
         ? (wavTags?.year || (common.year ? String(common.year) : ''))
         : (common.year ? String(common.year) : '');
     const resolvedTrackNo = ext === '.wav' ? (wavTags?.trackNo || toTrackNo(common.track)) : toTrackNo(common.track);
+    const resolvedGenre = ext === '.wav'
+      ? (wavParsed.genre || wavTags?.genre || commonGenre || '')
+      : (commonGenre || '');
+    const resolvedLyrics = ext === '.wav'
+      ? (wavParsed.lyrics || wavTags?.lyrics || commonLyrics || '')
+      : (commonLyrics || '');
     const resolvedNote = ext === '.wav' ? (wavParsed.note || fallbackComment) : fallbackComment;
     const resolvedSource = ext === '.wav' ? (wavParsed.source || sourceTag) : sourceTag;
     const rawTIT2 = ext === '.wav' ? resolvedTitle : (readNativeFirst(parsed, ['TIT2']) || resolvedTitle);
     const rawTPE1 = ext === '.wav' ? resolvedArtist : (readNativeFirst(parsed, ['TPE1']) || resolvedArtist);
+    const rawTCON = ext === '.wav' ? resolvedGenre : (readNativeFirst(parsed, ['TCON']) || resolvedGenre);
+    const rawUSLT = ext === '.wav' ? resolvedLyrics : (readNativeFirst(parsed, ['USLT']) || resolvedLyrics);
     const rawCOMM = ext === '.wav'
       ? resolvedNote
       : (readNativeFirst(parsed, ['COMM', 'TXXX:comment']) || resolvedNote);
@@ -460,11 +564,15 @@ async function readMetadata(filePath) {
       artist: resolvedArtist,
       album: resolvedAlbum,
       year: resolvedYear,
+      genre: resolvedGenre,
+      lyrics: resolvedLyrics,
       note: resolvedNote,
       trackNo: resolvedTrackNo,
       source: resolvedSource,
       rawTIT2,
       rawTPE1,
+      rawTCON,
+      rawUSLT,
       rawCOMM,
       rawWOAS,
       codec: formatInfo.codec || '',
@@ -476,6 +584,7 @@ async function readMetadata(filePath) {
       hasEmbeddedCover,
       embeddedCoverDataUrl,
       embeddedCoverPath,
+      coverDataUrl: '',
       coverPath: '',
       removeCover: false,
       rawAttributes: buildRawAttributes(parsed, stat, filePath, resolvedSource),
@@ -493,11 +602,15 @@ async function readMetadata(filePath) {
       artist: '',
       album: '',
       year: '',
+      genre: '',
+      lyrics: '',
       note: '',
       trackNo: '',
       source: '',
       rawTIT2: '',
       rawTPE1: '',
+      rawTCON: '',
+      rawUSLT: '',
       rawCOMM: '',
       rawWOAS: '',
       codec: '',
@@ -509,6 +622,7 @@ async function readMetadata(filePath) {
       hasEmbeddedCover: false,
       embeddedCoverDataUrl: '',
       embeddedCoverPath: '',
+      coverDataUrl: '',
       coverPath: '',
       removeCover: false,
       rawAttributes: [
@@ -568,23 +682,24 @@ async function probeMedia(filePath) {
 }
 
 function buildMetadataEntries(item, ext) {
-  const normalizeValue = (value) => {
-    if (typeof value !== 'string') return '';
-    return value.trim().normalize('NFC');
-  };
+  const normalizeValue = (value) => normalizeTagText(value);
 
   const isRawFirst = ext === '.mp3' || ext === '.wav';
   const title = normalizeValue(isRawFirst ? (item.rawTIT2 || item.title) : item.title);
   const artist = normalizeValue(isRawFirst ? (item.rawTPE1 || item.artist) : item.artist);
+  const genre = normalizeValue(isRawFirst ? (item.rawTCON || item.genre) : item.genre);
+  const lyrics = normalizeValue(isRawFirst ? (item.rawUSLT || item.lyrics) : item.lyrics);
   const note = normalizeValue(isRawFirst ? (item.rawCOMM || item.note) : item.note);
   const source = normalizeValue(isRawFirst ? (item.rawWOAS || item.source) : item.source);
-  const wavComment = ext === '.wav' ? composeWavComment(note, source) : note;
+  const wavComment = ext === '.wav' ? composeWavComment(note, source, genre, lyrics) : note;
 
   const entries = [
     ['title', title],
     ['artist', artist],
     ['album', normalizeValue(item.album)],
     ['date', normalizeValue(item.year)],
+    ['genre', ext === '.wav' ? '' : genre],
+    ['lyrics', ext === '.wav' ? '' : lyrics],
     ['comment', wavComment],
     ['source', ext === '.wav' ? '' : source],
     ['track', normalizeValue(item.trackNo)]
@@ -629,7 +744,7 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   args.push(tempPath);
   try {
     await runProcess(ffmpegPath, args);
-    await fs.rename(tempPath, targetPath);
+    await replaceFileFromTemp(tempPath, targetPath);
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
     throw error;
@@ -645,15 +760,20 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
   }
 
   const tags = {
-    title: item.rawTIT2 || item.title || undefined,
-    artist: item.rawTPE1 || item.artist || undefined,
-    album: item.album || undefined,
-    year: item.year || undefined,
-    trackNumber: item.trackNo || undefined,
-    audioSourceUrl: item.rawWOAS || item.source || undefined,
+    title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
+    artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
+    album: normalizeTagText(item.album) || undefined,
+    year: normalizeTagText(item.year) || undefined,
+    genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
+    trackNumber: normalizeTagText(item.trackNo) || undefined,
+    audioSourceUrl: normalizeTagText(item.rawWOAS || item.source) || undefined,
+    unsynchronisedLyrics: {
+      language: 'eng',
+      text: normalizeTagText(item.rawUSLT || item.lyrics)
+    },
     comment: {
       language: 'eng',
-      text: item.rawCOMM || item.note || ''
+      text: normalizeTagText(item.rawCOMM || item.note)
     }
   };
 
@@ -666,7 +786,7 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
     throw new Error('MP3 标签写入失败');
   }
-  await fs.rename(tempPath, targetPath);
+  await replaceFileFromTemp(tempPath, targetPath);
 }
 
 async function resolveUniqueOutputPath(directory, baseName) {
@@ -693,6 +813,21 @@ function buildTempOutputPath(targetPath) {
     dir,
     `${name}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`
   );
+}
+
+async function replaceFileFromTemp(tempPath, targetPath) {
+  try {
+    await fs.rename(tempPath, targetPath);
+    return;
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : '';
+    if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EBUSY') {
+      throw error;
+    }
+  }
+
+  await fs.rm(targetPath, { force: true }).catch(() => {});
+  await fs.rename(tempPath, targetPath);
 }
 
 async function isSameFilePath(a, b) {
@@ -725,6 +860,10 @@ ipcMain.handle('pick-cover-image', async () => {
     ]
   });
   return result.canceled || !result.filePaths.length ? '' : result.filePaths[0];
+});
+
+ipcMain.handle('read-image-data-url', async (_event, filePath) => {
+  return readImageAsDataUrl(filePath);
 });
 
 ipcMain.handle('open-external-url', async (_event, url) => {
@@ -823,6 +962,11 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
       }
       success += 1;
     } catch (error) {
+      console.error('[TuneTag] save failed:', {
+        input: item.path,
+        output: outputPath,
+        error: error instanceof Error ? error.message : String(error)
+      });
       failures.push({ path: item.path, reason: error instanceof Error ? error.message : '写入异常' });
     }
 

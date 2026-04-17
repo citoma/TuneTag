@@ -9,10 +9,72 @@ type BatchForm = {
   artist: string;
   album: string;
   year: string;
+  genre: string;
+  lyrics: string;
   trackNo: string;
   rawWOAS: string;
   rawCOMM: string;
 };
+
+type HistoryKey = 'title' | 'artist' | 'album' | 'year' | 'genre' | 'trackNo' | 'rawWOAS';
+type FieldHistory = Record<HistoryKey, string[]>;
+
+const HISTORY_STORAGE_KEY = 'tunetag.fieldHistory.v1';
+const HISTORY_LIMIT = 8;
+
+function emptyFieldHistory(): FieldHistory {
+  return {
+    title: [],
+    artist: [],
+    album: [],
+    year: [],
+    genre: [],
+    trackNo: [],
+    rawWOAS: []
+  };
+}
+
+function normalizeHistoryValue(value: string) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function loadFieldHistory(): FieldHistory {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return emptyFieldHistory();
+    const parsed = JSON.parse(raw);
+    const base = emptyFieldHistory();
+    for (const key of Object.keys(base) as HistoryKey[]) {
+      const list = Array.isArray(parsed?.[key]) ? parsed[key] : [];
+      base[key] = list
+        .map((item: string) => normalizeHistoryValue(item))
+        .filter(Boolean)
+        .slice(0, HISTORY_LIMIT);
+    }
+    return base;
+  } catch {
+    return emptyFieldHistory();
+  }
+}
+
+function pushHistoryEntries(history: FieldHistory, entries: Array<[HistoryKey, string]>) {
+  const next: FieldHistory = {
+    title: [...history.title],
+    artist: [...history.artist],
+    album: [...history.album],
+    year: [...history.year],
+    genre: [...history.genre],
+    trackNo: [...history.trackNo],
+    rawWOAS: [...history.rawWOAS]
+  };
+
+  for (const [key, rawValue] of entries) {
+    const value = normalizeHistoryValue(rawValue);
+    if (!value) continue;
+    next[key] = [value, ...next[key].filter((item) => item !== value)].slice(0, HISTORY_LIMIT);
+  }
+  return next;
+}
 
 function toSnapshot(track: Track): TrackSnapshot {
   return {
@@ -24,16 +86,21 @@ function toSnapshot(track: Track): TrackSnapshot {
     artist: track.artist,
     album: track.album,
     year: track.year,
+    genre: track.genre,
+    lyrics: track.lyrics,
     note: track.note,
     trackNo: track.trackNo,
     source: track.source,
     rawTIT2: track.rawTIT2,
     rawTPE1: track.rawTPE1,
+    rawTCON: track.rawTCON,
+    rawUSLT: track.rawUSLT,
     rawCOMM: track.rawCOMM,
     rawWOAS: track.rawWOAS,
     hasEmbeddedCover: track.hasEmbeddedCover,
     embeddedCoverDataUrl: track.embeddedCoverDataUrl,
     embeddedCoverPath: track.embeddedCoverPath,
+    coverDataUrl: track.coverDataUrl,
     coverPath: track.coverPath,
     removeCover: track.removeCover,
     rawAttributes: track.rawAttributes,
@@ -102,13 +169,18 @@ const useStore = create<AppState>((set, get) => ({
             candidate.artist !== base.artist ||
             candidate.album !== base.album ||
             candidate.year !== base.year ||
+            candidate.genre !== base.genre ||
+            candidate.lyrics !== base.lyrics ||
             candidate.source !== base.source ||
             candidate.rawTIT2 !== base.rawTIT2 ||
             candidate.rawTPE1 !== base.rawTPE1 ||
+            candidate.rawTCON !== base.rawTCON ||
+            candidate.rawUSLT !== base.rawUSLT ||
             candidate.rawCOMM !== base.rawCOMM ||
             candidate.rawWOAS !== base.rawWOAS ||
             candidate.note !== base.note ||
             candidate.trackNo !== base.trackNo ||
+            candidate.coverDataUrl !== base.coverDataUrl ||
             candidate.coverPath !== base.coverPath ||
             candidate.removeCover !== base.removeCover)
       );
@@ -134,13 +206,18 @@ const useStore = create<AppState>((set, get) => ({
             candidate.artist !== base.artist ||
             candidate.album !== base.album ||
             candidate.year !== base.year ||
+            candidate.genre !== base.genre ||
+            candidate.lyrics !== base.lyrics ||
             candidate.source !== base.source ||
             candidate.rawTIT2 !== base.rawTIT2 ||
             candidate.rawTPE1 !== base.rawTPE1 ||
+            candidate.rawTCON !== base.rawTCON ||
+            candidate.rawUSLT !== base.rawUSLT ||
             candidate.rawCOMM !== base.rawCOMM ||
             candidate.rawWOAS !== base.rawWOAS ||
             candidate.note !== base.note ||
             candidate.trackNo !== base.trackNo ||
+            candidate.coverDataUrl !== base.coverDataUrl ||
             candidate.coverPath !== base.coverPath ||
             candidate.removeCover !== base.removeCover)
       );
@@ -176,13 +253,18 @@ const useStore = create<AppState>((set, get) => ({
         artist: base.artist,
         album: base.album,
         year: base.year,
+        genre: base.genre,
+        lyrics: base.lyrics,
         source: base.source,
         rawTIT2: base.rawTIT2,
         rawTPE1: base.rawTPE1,
+        rawTCON: base.rawTCON,
+        rawUSLT: base.rawUSLT,
         rawCOMM: base.rawCOMM,
         rawWOAS: base.rawWOAS,
         note: base.note,
         trackNo: base.trackNo,
+        coverDataUrl: base.coverDataUrl,
         coverPath: base.coverPath,
         removeCover: base.removeCover,
         dirty: false,
@@ -238,15 +320,43 @@ function App() {
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [saveMessage, setSaveMessage] = useState('');
   const [saveFailures, setSaveFailures] = useState<Array<{ path: string; reason: string }>>([]);
+  const [fieldHistory, setFieldHistory] = useState<FieldHistory>(() => loadFieldHistory());
   const [batchForm, setBatchForm] = useState<BatchForm>({
     title: '',
     artist: '',
     album: '',
     year: '',
+    genre: '',
+    lyrics: '',
     trackNo: '',
     rawWOAS: '',
     rawCOMM: ''
   });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(fieldHistory));
+    } catch {
+      // ignore storage write failures
+    }
+  }, [fieldHistory]);
+
+  function rememberHistory(entries: Array<[HistoryKey, string]>) {
+    if (!entries.length) return;
+    setFieldHistory((prev) => pushHistoryEntries(prev, entries));
+  }
+
+  function removeHistoryEntry(field: HistoryKey, value: string) {
+    setFieldHistory((prev) => ({
+      ...prev,
+      [field]: prev[field].filter((item) => item !== value)
+    }));
+  }
+
+  function historyLabel(value: string) {
+    if (value.length <= 16) return value;
+    return `${value.slice(0, 16)}…`;
+  }
 
   useEffect(() => {
     if (!api) return;
@@ -278,6 +388,8 @@ function App() {
       artist: '',
       album: '',
       year: '',
+      genre: '',
+      lyrics: '',
       trackNo: '',
       rawWOAS: '',
       rawCOMM: ''
@@ -362,14 +474,55 @@ function App() {
   async function onDropFiles(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
-    const files = Array.from(event.dataTransfer.files);
-    const paths = files
-      .map((file) => {
-        const fromElectron = window.tunetag?.getPathForFile?.(file) || '';
-        const fallback = (file as File & { path?: string }).path || '';
-        return fromElectron || fallback;
-      })
-      .filter(Boolean);
+    const addPath = (set: Set<string>, raw: string) => {
+      const normalized = String(raw || '').trim();
+      if (!normalized) return;
+      if (normalized.startsWith('file://')) {
+        try {
+          set.add(decodeURI(new URL(normalized).pathname));
+          return;
+        } catch {
+          // ignore malformed url
+        }
+      }
+      set.add(normalized);
+    };
+
+    const pathSet = new Set<string>();
+    const files = Array.from(event.dataTransfer.files || []);
+    for (const file of files) {
+      const fromElectron = window.tunetag?.getPathForFile?.(file) || '';
+      const fallback = (file as File & { path?: string }).path || '';
+      addPath(pathSet, fromElectron || fallback);
+    }
+
+    const items = Array.from(event.dataTransfer.items || []);
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      const fromElectron = window.tunetag?.getPathForFile?.(file) || '';
+      const fallback = (file as File & { path?: string }).path || '';
+      addPath(pathSet, fromElectron || fallback);
+    }
+
+    const uriList = event.dataTransfer.getData('text/uri-list') || '';
+    if (uriList) {
+      for (const line of uriList.split(/\r?\n/u)) {
+        const value = line.trim();
+        if (!value || value.startsWith('#')) continue;
+        addPath(pathSet, value);
+      }
+    }
+
+    const plainText = event.dataTransfer.getData('text/plain') || '';
+    if (plainText.includes('file://')) {
+      for (const token of plainText.split(/\s+/u)) {
+        if (token.startsWith('file://')) addPath(pathSet, token);
+      }
+    }
+
+    const paths = Array.from(pathSet);
 
     if (!paths.length) {
       setSaveMessage('拖拽成功但未读取到文件路径，请改用“选择文件”或继续导入');
@@ -419,6 +572,8 @@ function App() {
       artist: batchForm.artist.trim(),
       album: batchForm.album.trim(),
       year: batchForm.year.trim(),
+      genre: batchForm.genre.trim(),
+      lyrics: batchForm.lyrics.trim(),
       trackNo: batchForm.trackNo.trim(),
       rawWOAS: allowSource ? batchForm.rawWOAS.trim() : '',
       rawCOMM: allowNote ? batchForm.rawCOMM.trim() : ''
@@ -429,6 +584,8 @@ function App() {
       const nextArtist = normalized.artist ? normalized.artist : track.artist;
       const nextAlbum = normalized.album;
       const nextYear = normalized.year;
+      const nextGenre = normalized.genre;
+      const nextLyrics = normalized.lyrics;
       const nextTrackNo = normalized.trackNo;
       const nextSource = allowSource ? normalized.rawWOAS : track.source;
       const nextNote = allowNote ? normalized.rawCOMM : track.note;
@@ -437,11 +594,15 @@ function App() {
         artist: nextArtist,
         album: nextAlbum,
         year: nextYear,
+        genre: nextGenre,
+        lyrics: nextLyrics,
         trackNo: nextTrackNo,
         source: nextSource,
         note: nextNote,
         rawTIT2: nextTitle,
         rawTPE1: nextArtist,
+        rawTCON: nextGenre,
+        rawUSLT: nextLyrics,
         rawCOMM: nextNote,
         rawWOAS: nextSource
       };
@@ -461,12 +622,13 @@ function App() {
     if (!api) return;
     const coverPath = await api.pickCoverImage();
     if (!coverPath) return;
-    updateTrack(trackId, { coverPath, removeCover: false });
+    const coverDataUrl = await api.readImageDataUrl(coverPath);
+    updateTrack(trackId, { coverPath, coverDataUrl, removeCover: false });
   }
 
   function onRemoveCover(track: Track) {
     if (!getEditableRules(track).coverEditable) return;
-    updateTrack(track.id, { coverPath: '', removeCover: true });
+    updateTrack(track.id, { coverPath: '', coverDataUrl: '', removeCover: true });
   }
 
   async function onSave() {
@@ -488,12 +650,16 @@ function App() {
         artist: track.artist,
         album: track.album,
         year: track.year,
+        genre: track.genre,
+        lyrics: track.lyrics,
         note: track.note,
         source: track.source,
         coverPath: track.coverPath,
         removeCover: track.removeCover,
         rawTIT2: track.rawTIT2,
         rawTPE1: track.rawTPE1,
+        rawTCON: track.rawTCON,
+        rawUSLT: track.rawUSLT,
         rawCOMM: track.rawCOMM,
         rawWOAS: track.rawWOAS,
         trackNo: track.trackNo
@@ -509,6 +675,17 @@ function App() {
       const okIds = dirtyTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
 
       markSaveResult(okIds, result.failures);
+      rememberHistory(
+        dirtyTracks.flatMap((track) => ([
+          ['title', track.title],
+          ['artist', track.artist],
+          ['album', track.album],
+          ['year', track.year],
+          ['genre', track.genre],
+          ['trackNo', track.trackNo],
+          ['rawWOAS', track.rawWOAS]
+        ] as Array<[HistoryKey, string]>))
+      );
       setSaveMessage(
         `已保存到 ${result.targetDirectory || '目标文件夹'}：成功 ${result.success} 个；失败 ${result.failed} 个`
       );
@@ -524,6 +701,40 @@ function App() {
     const removeCount = selectedIds.length;
     removeTracks(selectedIds);
     setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
+  }
+
+  function renderHistoryChips(field: HistoryKey, onPick: (value: string) => void) {
+    const options = fieldHistory[field];
+    if (!options.length) return null;
+    return (
+      <div className="history-row">
+        {options.map((value) => (
+          <div key={`${field}-${value}`} className="history-chip-wrap">
+            <button
+              type="button"
+              className="history-chip"
+              title={value}
+              onClick={() => onPick(value)}
+            >
+              {historyLabel(value)}
+            </button>
+            <button
+              type="button"
+              className="history-chip-remove"
+              title="删除该历史记录"
+              aria-label="删除该历史记录"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                removeHistoryEntry(field, value);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   function renderEmpty() {
@@ -583,8 +794,10 @@ function App() {
     const showNoteField = Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
     const coverSrc = track.removeCover
       ? ''
-      : track.coverPath
-        ? `file://${encodeURI(track.coverPath)}`
+      : track.coverDataUrl
+        ? track.coverDataUrl
+        : track.coverPath
+          ? `file://${encodeURI(track.coverPath)}`
         : track.embeddedCoverDataUrl
           ? track.embeddedCoverDataUrl
           : track.embeddedCoverPath
@@ -594,30 +807,83 @@ function App() {
       <div className="panel-group">
         <h3>可编辑标签</h3>
         <label>标题</label>
-        <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.title} onChange={(e) => updateTrack(track.id, { title: e.target.value, rawTIT2: e.target.value })} />
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.title}
+          onChange={(e) => updateTrack(track.id, { title: e.target.value, rawTIT2: e.target.value })}
+          onBlur={(e) => rememberHistory([['title', e.target.value]])}
+        />
+        {renderHistoryChips('title', (value) => updateTrack(track.id, { title: value, rawTIT2: value }))}
         <label>艺术家</label>
-        <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.artist} onChange={(e) => updateTrack(track.id, { artist: e.target.value, rawTPE1: e.target.value })} />
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.artist}
+          onChange={(e) => updateTrack(track.id, { artist: e.target.value, rawTPE1: e.target.value })}
+          onBlur={(e) => rememberHistory([['artist', e.target.value]])}
+        />
+        {renderHistoryChips('artist', (value) => updateTrack(track.id, { artist: value, rawTPE1: value }))}
         <label>专辑</label>
-        <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.album} onChange={(e) => updateTrack(track.id, { album: e.target.value })} />
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.album}
+          onChange={(e) => updateTrack(track.id, { album: e.target.value })}
+          onBlur={(e) => rememberHistory([['album', e.target.value]])}
+        />
+        {renderHistoryChips('album', (value) => updateTrack(track.id, { album: value }))}
+        <label>流派</label>
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.genre}
+          onChange={(e) => updateTrack(track.id, { genre: e.target.value, rawTCON: e.target.value })}
+          onBlur={(e) => rememberHistory([['genre', e.target.value]])}
+        />
+        {renderHistoryChips('genre', (value) => updateTrack(track.id, { genre: value, rawTCON: value }))}
         <div className="row-2">
           <div>
             <label>年份</label>
-            <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.year} onChange={(e) => updateTrack(track.id, { year: e.target.value })} />
+            <input
+              disabled={!rules.commonEditable}
+              className={!rules.commonEditable ? 'input-disabled' : ''}
+              value={track.year}
+              onChange={(e) => updateTrack(track.id, { year: e.target.value })}
+              onBlur={(e) => rememberHistory([['year', e.target.value]])}
+            />
+            {renderHistoryChips('year', (value) => updateTrack(track.id, { year: value }))}
           </div>
           <div>
             <label>曲目号</label>
-            <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.trackNo} onChange={(e) => updateTrack(track.id, { trackNo: e.target.value })} />
+            <input
+              disabled={!rules.commonEditable}
+              className={!rules.commonEditable ? 'input-disabled' : ''}
+              value={track.trackNo}
+              onChange={(e) => updateTrack(track.id, { trackNo: e.target.value })}
+              onBlur={(e) => rememberHistory([['trackNo', e.target.value]])}
+            />
+            {renderHistoryChips('trackNo', (value) => updateTrack(track.id, { trackNo: value }))}
           </div>
         </div>
+        <label>歌词</label>
+        <textarea disabled={!rules.commonEditable} className={`lyrics-textarea ${!rules.commonEditable ? 'input-disabled' : ''}`} value={track.lyrics} onChange={(e) => updateTrack(track.id, { lyrics: e.target.value, rawUSLT: e.target.value })} rows={10} />
         {showSourceField && (
           <>
-            <label>原始:WOAS</label>
-            <input disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.rawWOAS} onChange={(e) => updateTrack(track.id, { rawWOAS: e.target.value, source: e.target.value })} />
+            <label>自定义</label>
+            <input
+              disabled={!rules.commonEditable}
+              className={!rules.commonEditable ? 'input-disabled' : ''}
+              value={track.rawWOAS}
+              onChange={(e) => updateTrack(track.id, { rawWOAS: e.target.value, source: e.target.value })}
+              onBlur={(e) => rememberHistory([['rawWOAS', e.target.value]])}
+            />
+            {renderHistoryChips('rawWOAS', (value) => updateTrack(track.id, { rawWOAS: value, source: value }))}
           </>
         )}
         {showNoteField && (
           <>
-            <label>原始:COMM</label>
+            <label>备注</label>
             <textarea disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.rawCOMM} onChange={(e) => updateTrack(track.id, { rawCOMM: e.target.value, note: e.target.value })} rows={4} />
             <p className="field-tip">这里会按原始标签写回文件。</p>
           </>
@@ -638,15 +904,6 @@ function App() {
           <button className="ghost" disabled={!rules.coverEditable || (!track.coverPath && !track.hasEmbeddedCover)} onClick={() => onRemoveCover(track)}>
             删除封面
           </button>
-          <span className={!rules.coverEditable ? 'muted' : ''}>
-            {track.removeCover
-              ? '将删除封面并留空'
-              : track.coverPath
-              ? track.coverPath.split('/').pop()
-              : rules.coverEditable
-                ? '未设置'
-                : '该格式暂不支持修改封面'}
-          </span>
         </div>
 
         <details style={{ marginTop: 10 }}>
@@ -680,30 +937,69 @@ function App() {
         <p className="batch-tip">已选中 {selectedIds.length} 个文件，当前为批量编辑模式</p>
 
         <label>标题</label>
-        <input value={batchForm.title} onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))} />
+        <input
+          value={batchForm.title}
+          onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))}
+          onBlur={(e) => rememberHistory([['title', e.target.value]])}
+        />
+        {renderHistoryChips('title', (value) => setBatchForm((p) => ({ ...p, title: value })))}
         <label>艺术家</label>
-        <input value={batchForm.artist} onChange={(e) => setBatchForm((p) => ({ ...p, artist: e.target.value }))} />
+        <input
+          value={batchForm.artist}
+          onChange={(e) => setBatchForm((p) => ({ ...p, artist: e.target.value }))}
+          onBlur={(e) => rememberHistory([['artist', e.target.value]])}
+        />
+        {renderHistoryChips('artist', (value) => setBatchForm((p) => ({ ...p, artist: value })))}
         <label>专辑</label>
-        <input value={batchForm.album} onChange={(e) => setBatchForm((p) => ({ ...p, album: e.target.value }))} />
+        <input
+          value={batchForm.album}
+          onChange={(e) => setBatchForm((p) => ({ ...p, album: e.target.value }))}
+          onBlur={(e) => rememberHistory([['album', e.target.value]])}
+        />
+        {renderHistoryChips('album', (value) => setBatchForm((p) => ({ ...p, album: value })))}
+        <label>流派</label>
+        <input
+          value={batchForm.genre}
+          onChange={(e) => setBatchForm((p) => ({ ...p, genre: e.target.value }))}
+          onBlur={(e) => rememberHistory([['genre', e.target.value]])}
+        />
+        {renderHistoryChips('genre', (value) => setBatchForm((p) => ({ ...p, genre: value })))}
         <div className="row-2">
           <div>
             <label>年份</label>
-            <input value={batchForm.year} onChange={(e) => setBatchForm((p) => ({ ...p, year: e.target.value }))} />
+            <input
+              value={batchForm.year}
+              onChange={(e) => setBatchForm((p) => ({ ...p, year: e.target.value }))}
+              onBlur={(e) => rememberHistory([['year', e.target.value]])}
+            />
+            {renderHistoryChips('year', (value) => setBatchForm((p) => ({ ...p, year: value })))}
           </div>
           <div>
             <label>曲目号</label>
-            <input value={batchForm.trackNo} onChange={(e) => setBatchForm((p) => ({ ...p, trackNo: e.target.value }))} />
+            <input
+              value={batchForm.trackNo}
+              onChange={(e) => setBatchForm((p) => ({ ...p, trackNo: e.target.value }))}
+              onBlur={(e) => rememberHistory([['trackNo', e.target.value]])}
+            />
+            {renderHistoryChips('trackNo', (value) => setBatchForm((p) => ({ ...p, trackNo: value })))}
           </div>
         </div>
+        <label>歌词</label>
+        <textarea className="lyrics-textarea" rows={8} value={batchForm.lyrics} onChange={(e) => setBatchForm((p) => ({ ...p, lyrics: e.target.value }))} />
         {showBatchSourceField && (
           <>
-            <label>原始:WOAS</label>
-            <input value={batchForm.rawWOAS} onChange={(e) => setBatchForm((p) => ({ ...p, rawWOAS: e.target.value }))} />
+            <label>自定义</label>
+            <input
+              value={batchForm.rawWOAS}
+              onChange={(e) => setBatchForm((p) => ({ ...p, rawWOAS: e.target.value }))}
+              onBlur={(e) => rememberHistory([['rawWOAS', e.target.value]])}
+            />
+            {renderHistoryChips('rawWOAS', (value) => setBatchForm((p) => ({ ...p, rawWOAS: value })))}
           </>
         )}
         {showBatchNoteField && (
           <>
-            <label>原始:COMM</label>
+            <label>备注</label>
             <textarea rows={3} value={batchForm.rawCOMM} onChange={(e) => setBatchForm((p) => ({ ...p, rawCOMM: e.target.value }))} />
           </>
         )}

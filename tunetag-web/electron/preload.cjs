@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('tunetag', {
   pickPaths: () => ipcRenderer.invoke('pick-paths'),
   pickCoverImage: () => ipcRenderer.invoke('pick-cover-image'),
+  readImageDataUrl: (filePath) => ipcRenderer.invoke('read-image-data-url', filePath),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file);
