@@ -31,6 +31,7 @@ export type Track = {
   embeddedCoverPath: string;
   coverDataUrl: string;
   coverPath: string;
+  exportedPath: string;
   removeCover: boolean;
   rawAttributes: Array<{ key: string; value: string }>;
   dirty: boolean;
@@ -51,7 +52,9 @@ declare global {
       readImageDataUrl: (filePath: string) => Promise<string>;
       getPathForFile: (file: File) => string;
       importPaths: (paths: string[]) => Promise<ImportResult>;
+      setCloseGuardHasFiles: (hasFiles: boolean) => Promise<boolean>;
       openExternalUrl: (url: string) => Promise<boolean>;
+      revealInFolder: (filePath: string) => Promise<boolean>;
       getEmbeddedCover: (filePath: string) => Promise<{
         hasEmbeddedCover: boolean;
         embeddedCoverPath: string;
@@ -65,8 +68,10 @@ declare global {
         success: number;
         failed: number;
         failures: Array<{ path: string; reason: string }>;
+        exported: Array<{ sourcePath: string; outputPath: string }>;
       }>;
       onSaveProgress: (callback: (payload: { completed: number; total: number }) => void) => () => void;
+      onExternalOpenPaths: (callback: (paths: string[]) => void) => () => void;
     };
   }
 }

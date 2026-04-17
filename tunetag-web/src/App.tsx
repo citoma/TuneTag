@@ -169,6 +169,7 @@ function toSnapshot(track: Track): TrackSnapshot {
     embeddedCoverPath: track.embeddedCoverPath,
     coverDataUrl: track.coverDataUrl,
     coverPath: track.coverPath,
+    exportedPath: track.exportedPath,
     removeCover: track.removeCover,
     rawAttributes: track.rawAttributes,
     codec: track.codec,
@@ -191,7 +192,7 @@ type AppState = {
   bulkUpdate: (ids: string[], updater: (track: Track) => Partial<Track>) => void;
   removeTracks: (ids: string[]) => void;
   resetDirty: () => void;
-  markSaveResult: (okIds: string[], failures: Array<{ path: string; reason: string }>) => void;
+  markSaveResult: (okIds: string[], failures: Array<{ path: string; reason: string }>, exported: Array<{ sourcePath: string; outputPath: string }>) => void;
 };
 
 const useStore = create<AppState>((set, get) => ({
@@ -254,6 +255,7 @@ const useStore = create<AppState>((set, get) => ({
       return {
         ...candidate,
         dirty,
+        exportedPath: dirty ? '' : track.exportedPath,
         status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
         errorMessage: ''
       };
@@ -291,6 +293,7 @@ const useStore = create<AppState>((set, get) => ({
       return {
         ...candidate,
         dirty,
+        exportedPath: dirty ? '' : track.exportedPath,
         status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
         errorMessage: ''
       };
@@ -333,6 +336,7 @@ const useStore = create<AppState>((set, get) => ({
         trackNo: base.trackNo,
         coverDataUrl: base.coverDataUrl,
         coverPath: base.coverPath,
+        exportedPath: '',
         removeCover: base.removeCover,
         dirty: false,
         status: 'clean' as const,
@@ -341,18 +345,25 @@ const useStore = create<AppState>((set, get) => ({
     });
     set({ tracks: reset });
   },
-  markSaveResult: (okIds, failures) => {
+  markSaveResult: (okIds, failures, exported) => {
     const okSet = new Set(okIds);
     const failMap = new Map(failures.map((item) => [item.path, item.reason]));
+    const exportedMap = new Map(exported.map((item) => [item.sourcePath, item.outputPath]));
 
     const { tracks, originals } = get();
     const nextTracks = tracks.map((track) => {
       if (okSet.has(track.id)) {
-        return { ...track, dirty: false, status: 'exported' as const, errorMessage: '' };
+        return {
+          ...track,
+          dirty: false,
+          status: 'exported' as const,
+          errorMessage: '',
+          exportedPath: exportedMap.get(track.path) || track.exportedPath || ''
+        };
       }
       const reason = failMap.get(track.path);
       if (reason) {
-        return { ...track, status: 'error' as const, errorMessage: reason };
+        return { ...track, status: 'error' as const, errorMessage: reason, exportedPath: '' };
       }
       return track;
     });
@@ -438,6 +449,22 @@ function App() {
     const unsubscribe = api.onSaveProgress((payload) => setProgress(payload));
     return unsubscribe;
   }, [api]);
+
+  useEffect(() => {
+    if (!api?.onExternalOpenPaths) return;
+    const unsubscribe = api.onExternalOpenPaths((paths) => {
+      if (!paths.length) return;
+      importPaths(paths).catch(() => {
+        setSaveMessage('通过“打开方式”导入文件失败，请重试');
+      });
+    });
+    return unsubscribe;
+  }, [api]);
+
+  useEffect(() => {
+    if (!api?.setCloseGuardHasFiles) return;
+    api.setCloseGuardHasFiles(tracks.length > 0).catch(() => {});
+  }, [api, tracks.length]);
 
   useEffect(() => {
     const preventDefault = (event: DragEvent) => {
@@ -751,7 +778,7 @@ function App() {
       const failedSet = new Set(result.failures.map((f) => f.path));
       const okIds = targetTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
 
-      markSaveResult(okIds, result.failures);
+      markSaveResult(okIds, result.failures, result.exported || []);
       rememberHistory(
         targetTracks.flatMap((track) => ([
           ['title', track.title],
@@ -795,6 +822,15 @@ function App() {
     const removeCount = selectedIds.length;
     removeTracks(selectedIds);
       setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
+  }
+
+  async function onRevealExported(track: Track) {
+    const targetPath = String(track.exportedPath || '').trim();
+    if (!targetPath) return;
+    const ok = await api?.revealInFolder?.(targetPath);
+    if (!ok) {
+      setSaveMessage('无法打开导出文件所在位置');
+    }
   }
 
   function buildDefaultPresetName(form: BatchForm) {
@@ -1316,7 +1352,23 @@ function App() {
                         <td title={track.album}>{track.album}</td>
                         <td>{track.year}</td>
                         <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : track.status === 'exported' ? 'status-exported' : ''}>
-                          {statusLabel(track)}
+                          <span className="status-cell">
+                            {statusLabel(track)}
+                            {track.status === 'exported' && track.exportedPath ? (
+                              <button
+                                type="button"
+                                className="status-folder-btn"
+                                title="打开所在文件夹"
+                                aria-label="打开所在文件夹"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onRevealExported(track);
+                                }}
+                              >
+                                📂
+                              </button>
+                            ) : null}
+                          </span>
                         </td>
                       </tr>
                     );

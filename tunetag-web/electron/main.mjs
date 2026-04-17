@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
@@ -24,8 +24,100 @@ const APP_ICON_CANDIDATES = [
   path.join(process.resourcesPath, 'app-icon.png')
 ];
 const APP_ICON_PATH = APP_ICON_CANDIDATES.find((candidate) => existsSync(candidate));
+let mainWindowRef = null;
+const pendingOpenPaths = [];
+let hasImportedFiles = false;
+let allowWindowClose = false;
+let closeConfirmDisabled = false;
+const SETTINGS_PATH = path.join(app.getPath('userData'), 'tunetag-settings.json');
 
 app.setName('TuneTag');
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+function enqueueOpenPaths(rawPaths) {
+  const candidates = Array.isArray(rawPaths) ? rawPaths : [];
+  for (const rawPath of candidates) {
+    const normalized = path.resolve(String(rawPath || '').trim());
+    if (!normalized || !existsSync(normalized)) continue;
+    let stat;
+    try {
+      stat = statSync(normalized);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const ext = path.extname(normalized).toLowerCase();
+    if (!SUPPORTED_EXTENSIONS.has(ext)) continue;
+    if (!pendingOpenPaths.includes(normalized)) {
+      pendingOpenPaths.push(normalized);
+    }
+  }
+}
+
+function extractPathsFromArgv(argv = []) {
+  const out = [];
+  for (const token of argv) {
+    const value = String(token || '').trim();
+    if (!value || value.startsWith('-')) continue;
+    const resolved = path.resolve(value);
+    if (!existsSync(resolved)) continue;
+    out.push(resolved);
+  }
+  return out;
+}
+
+function flushPendingOpenPaths() {
+  if (!mainWindowRef || !pendingOpenPaths.length) return;
+  if (mainWindowRef.isDestroyed()) return;
+  const payload = [...pendingOpenPaths];
+  pendingOpenPaths.length = 0;
+  mainWindowRef.webContents.send('external-open-paths', payload);
+}
+
+async function loadSettings() {
+  try {
+    const raw = await fs.readFile(SETTINGS_PATH, 'utf8');
+    const parsed = JSON.parse(raw || '{}');
+    closeConfirmDisabled = Boolean(parsed?.closeConfirmDisabled);
+  } catch {
+    closeConfirmDisabled = false;
+  }
+}
+
+async function saveSettings() {
+  const payload = { closeConfirmDisabled };
+  await fs.mkdir(path.dirname(SETTINGS_PATH), { recursive: true }).catch(() => {});
+  await fs.writeFile(SETTINGS_PATH, JSON.stringify(payload, null, 2), 'utf8').catch(() => {});
+}
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  enqueueOpenPaths([filePath]);
+  if (app.isReady()) {
+    if (!mainWindowRef || mainWindowRef.isDestroyed()) {
+      createWindow();
+      return;
+    }
+    if (mainWindowRef.isMinimized()) mainWindowRef.restore();
+    mainWindowRef.focus();
+    flushPendingOpenPaths();
+  }
+});
+
+app.on('second-instance', (_event, argv) => {
+  enqueueOpenPaths(extractPathsFromArgv(argv));
+  if (!mainWindowRef || mainWindowRef.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindowRef.isMinimized()) mainWindowRef.restore();
+  mainWindowRef.focus();
+  flushPendingOpenPaths();
+});
 
 function createWindow() {
   const devUrl = 'http://localhost:5173';
@@ -44,6 +136,42 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false
     }
+  });
+  mainWindowRef = mainWindow;
+  allowWindowClose = false;
+
+  mainWindow.on('close', async (event) => {
+    if (allowWindowClose) return;
+    if (!hasImportedFiles || closeConfirmDisabled) return;
+
+    event.preventDefault();
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['取消', '关闭'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '确认关闭',
+      message: '当前列表还有文件，确定要关闭 TuneTag 吗？',
+      checkboxLabel: '不再提示',
+      checkboxChecked: false
+    });
+
+    if (result.response !== 1) return;
+
+    if (result.checkboxChecked) {
+      closeConfirmDisabled = true;
+      void saveSettings();
+    }
+
+    allowWindowClose = true;
+    mainWindow.close();
+  });
+
+  mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null;
+    }
+    hasImportedFiles = false;
   });
 
   const prodPath = path.join(__dirname, '..', 'dist', 'index.html');
@@ -99,6 +227,9 @@ function createWindow() {
     mainWindow.loadURL(devUrl).catch((error) => {
       console.error('[TuneTag] initial dev load error:', error);
     });
+    mainWindow.webContents.on('did-finish-load', () => {
+      flushPendingOpenPaths();
+    });
     mainWindow.webContents.openDevTools({ mode: 'detach' });
     return;
   }
@@ -108,9 +239,13 @@ function createWindow() {
   }
 
   mainWindow.loadFile(prodPath);
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushPendingOpenPaths();
+  });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadSettings();
   if (process.platform === 'darwin' && APP_ICON_PATH) {
     const dockIcon = nativeImage.createFromPath(APP_ICON_PATH);
     if (!dockIcon.isEmpty()) {
@@ -118,6 +253,7 @@ app.whenReady().then(() => {
     }
   }
 
+  enqueueOpenPaths(extractPathsFromArgv(process.argv));
   createWindow();
 
   app.on('activate', () => {
@@ -509,17 +645,20 @@ async function probeWavTags(filePath) {
 async function readMetadata(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const format = ext.replace('.', '').toUpperCase();
+  const fileStem = path.parse(filePath).name;
 
   try {
-    const parsed = await parseFile(filePath, { skipCovers: false, duration: true });
+    // Performance: avoid full-duration scan and cover pre-processing during import.
+    // Cover preview is loaded lazily when a row is selected.
+    const parsed = await parseFile(filePath, { skipCovers: false, duration: false });
     const common = parsed.common ?? {};
     const formatInfo = parsed.format ?? {};
     const stat = await fs.stat(filePath);
     const sourceTag = readSourceTag(parsed);
     const wavTags = ext === '.wav' ? await probeWavTags(filePath).catch(() => null) : null;
     const hasEmbeddedCover = Array.isArray(common.picture) && common.picture.length > 0;
-    const embeddedCoverDataUrl = hasEmbeddedCover ? pictureToDataUrl(common.picture[0]) : '';
-    const embeddedCoverPath = hasEmbeddedCover ? await writeEmbeddedCoverTemp(filePath, common.picture[0]) : '';
+    const embeddedCoverDataUrl = '';
+    const embeddedCoverPath = '';
     const fallbackComment = readCommentTag(parsed);
     const wavComment = wavTags?.comment || '';
     const wavParsed = parseWavCommentAndSource(wavComment);
@@ -528,7 +667,9 @@ async function readMetadata(filePath) {
     const commonAlbum = readCommonText(common, 'album');
     const commonGenre = readCommonText(common, 'genre');
     const commonLyrics = readCommonText(common, 'lyrics');
-    const resolvedTitle = ext === '.wav' ? (wavTags?.title || commonTitle || '') : (commonTitle || '');
+    const resolvedTitle = ext === '.wav'
+      ? (wavTags?.title || commonTitle || fileStem)
+      : (commonTitle || fileStem);
     const resolvedArtist = ext === '.wav' ? (wavTags?.artist || commonArtist || '') : (commonArtist || '');
     const resolvedAlbum = ext === '.wav' ? (wavTags?.album || commonAlbum || '') : (commonAlbum || '');
     const resolvedYear =
@@ -586,6 +727,7 @@ async function readMetadata(filePath) {
       embeddedCoverPath,
       coverDataUrl: '',
       coverPath: '',
+      exportedPath: '',
       removeCover: false,
       rawAttributes: buildRawAttributes(parsed, stat, filePath, resolvedSource),
       dirty: false,
@@ -624,6 +766,7 @@ async function readMetadata(filePath) {
       embeddedCoverPath: '',
       coverDataUrl: '',
       coverPath: '',
+      exportedPath: '',
       removeCover: false,
       rawAttributes: [
         { key: '路径', value: filePath },
@@ -715,38 +858,55 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
 
   await probeMedia(item.path);
 
-  const tempPath = buildTempOutputPath(targetPath);
-  const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', item.path];
   const ext = path.extname(targetPath).toLowerCase();
   const coverPath = typeof item.coverPath === 'string' ? item.coverPath.trim() : '';
   const withCover = Boolean(coverPath) && ext === '.mp3';
+  const buildArgs = (tempPath, forcePcmForWav = false) => {
+    const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', item.path];
 
-  if (withCover) {
-    args.push('-i', coverPath, '-map', '0:a', '-map', '1:v');
-  } else {
-    args.push('-map', '0');
-  }
-  args.push('-map_metadata', '-1');
+    if (withCover) {
+      args.push('-i', coverPath, '-map', '0:a', '-map', '1:v');
+    } else {
+      args.push('-map', '0');
+    }
+    args.push('-map_metadata', '-1');
 
-  for (const [key, value] of buildMetadataEntries(item, ext)) {
-    args.push('-metadata', `${key}=${value}`);
-  }
+    for (const [key, value] of buildMetadataEntries(item, ext)) {
+      args.push('-metadata', `${key}=${value}`);
+    }
 
-  if (withCover) {
-    args.push('-c:a', 'copy', '-c:v', 'mjpeg', '-disposition:v:0', 'attached_pic');
-  } else {
-    args.push('-c', 'copy');
-  }
-  if (ext === '.mp3') {
-    args.push('-id3v2_version', '3', '-write_id3v1', '0');
-  }
+    if (withCover) {
+      args.push('-c:a', 'copy', '-c:v', 'mjpeg', '-disposition:v:0', 'attached_pic');
+    } else if (forcePcmForWav && ext === '.wav') {
+      args.push('-map', '0:a:0', '-c:a', 'pcm_s16le');
+    } else {
+      args.push('-c', 'copy');
+    }
+    if (ext === '.mp3') {
+      args.push('-id3v2_version', '3', '-write_id3v1', '0');
+    }
 
-  args.push(tempPath);
+    args.push(tempPath);
+    return args;
+  };
+
+  const tempPath = buildTempOutputPath(targetPath);
   try {
-    await runProcess(ffmpegPath, args);
+    await runProcess(ffmpegPath, buildArgs(tempPath, false));
     await replaceFileFromTemp(tempPath, targetPath);
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
+    if (ext === '.wav') {
+      const retryTempPath = buildTempOutputPath(targetPath);
+      try {
+        await runProcess(ffmpegPath, buildArgs(retryTempPath, true));
+        await replaceFileFromTemp(retryTempPath, targetPath);
+        return;
+      } catch (retryError) {
+        await fs.rm(retryTempPath, { force: true }).catch(() => {});
+        throw retryError;
+      }
+    }
     throw error;
   }
 }
@@ -821,13 +981,24 @@ async function replaceFileFromTemp(tempPath, targetPath) {
     return;
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : '';
-    if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EBUSY') {
+    if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EBUSY' && code !== 'EXDEV') {
       throw error;
     }
   }
 
   await fs.rm(targetPath, { force: true }).catch(() => {});
-  await fs.rename(tempPath, targetPath);
+  try {
+    await fs.rename(tempPath, targetPath);
+    return;
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : '';
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EXDEV') {
+      throw error;
+    }
+  }
+
+  await fs.copyFile(tempPath, targetPath);
+  await fs.rm(tempPath, { force: true }).catch(() => {});
 }
 
 async function isSameFilePath(a, b) {
@@ -877,10 +1048,26 @@ ipcMain.handle('open-external-url', async (_event, url) => {
   }
 });
 
+ipcMain.handle('reveal-in-folder', async (_event, filePath) => {
+  const target = typeof filePath === 'string' ? filePath.trim() : '';
+  if (!target) return false;
+  try {
+    shell.showItemInFolder(target);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle('import-paths', async (_event, inputPaths) => {
   const { files, skipped } = await collectMediaFiles(inputPaths || []);
   const tracks = await Promise.all(files.map((filePath) => readMetadata(filePath)));
   return { tracks, skipped };
+});
+
+ipcMain.handle('set-close-guard-has-files', async (_event, hasFiles) => {
+  hasImportedFiles = Boolean(hasFiles);
+  return true;
 });
 
 ipcMain.handle('get-embedded-cover', async (_event, filePath) => {
@@ -907,6 +1094,7 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
   let completed = 0;
   let success = 0;
   const failures = [];
+  const exported = [];
   let conflictPolicy = null; // 'overwrite' | 'keep-both' | 'skip'
 
   for (const item of tracks || []) {
@@ -976,6 +1164,7 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
         await writeMetadataWithFfmpegToTarget(item, outputPath);
       }
       success += 1;
+      exported.push({ sourcePath: item.path, outputPath });
     } catch (error) {
       console.error('[TuneTag] save failed:', {
         input: item.path,
@@ -989,5 +1178,5 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
     event.sender.send('save-progress', { completed, total });
   }
 
-  return { canceled: false, targetDirectory, success, failed: failures.length, failures };
+  return { canceled: false, targetDirectory, success, failed: failures.length, failures, exported };
 });
