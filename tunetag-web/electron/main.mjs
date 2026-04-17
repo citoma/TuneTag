@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import { parseFile } from 'music-metadata';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
@@ -12,6 +13,7 @@ import NodeID3 from 'node-id3';
 const SUPPORTED_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const WRITABLE_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const FFPROBE_PATH = ffprobeStatic?.path;
+const FFMPEG_PATH = ffmpegPath;
 const WAV_SOURCE_PREFIX = '[TuneTagSource] ';
 const WAV_META_PREFIX = '[TuneTagMeta] ';
 
@@ -30,6 +32,56 @@ let hasImportedFiles = false;
 let allowWindowClose = false;
 let closeConfirmDisabled = false;
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'tunetag-settings.json');
+const runtimeBinaryCache = new Map();
+
+async function ensureExecutableBinary(sourcePath, binaryName) {
+  const source = String(sourcePath || '').trim();
+  if (!source) return '';
+
+  const unpackedCandidate = source.includes(`${path.sep}app.asar${path.sep}`)
+    ? source.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
+    : '';
+
+  if (unpackedCandidate && existsSync(unpackedCandidate)) {
+    return unpackedCandidate;
+  }
+
+  if (existsSync(source) && !source.includes(`${path.sep}app.asar${path.sep}`)) {
+    return source;
+  }
+
+  const cacheKey = `${binaryName}:${source}`;
+  const cached = runtimeBinaryCache.get(cacheKey);
+  if (cached && existsSync(cached)) return cached;
+
+  const digest = crypto.createHash('sha1').update(source).digest('hex').slice(0, 12);
+  const outDir = path.join(app.getPath('temp'), 'tunetag-binaries');
+  const outPath = path.join(outDir, `${binaryName}-${process.arch}-${digest}`);
+
+  if (existsSync(outPath)) {
+    runtimeBinaryCache.set(cacheKey, outPath);
+    return outPath;
+  }
+
+  await fs.mkdir(outDir, { recursive: true });
+  const bytes = await fs.readFile(source);
+  await fs.writeFile(outPath, bytes, { mode: 0o755 });
+  await fs.chmod(outPath, 0o755).catch(() => {});
+  runtimeBinaryCache.set(cacheKey, outPath);
+  return outPath;
+}
+
+async function getFfprobeExecutablePath() {
+  const resolved = await ensureExecutableBinary(FFPROBE_PATH, 'ffprobe');
+  if (!resolved) throw new Error('ffprobe 不可用');
+  return resolved;
+}
+
+async function getFfmpegExecutablePath() {
+  const resolved = await ensureExecutableBinary(FFMPEG_PATH, 'ffmpeg');
+  if (!resolved) throw new Error('ffmpeg 不可用');
+  return resolved;
+}
 
 app.setName('TuneTag');
 
@@ -809,12 +861,10 @@ function runProcess(command, args) {
 }
 
 async function probeMedia(filePath) {
-  if (!FFPROBE_PATH) {
-    throw new Error('ffprobe 不可用');
-  }
+  const ffprobeExecutablePath = await getFfprobeExecutablePath();
 
   const args = ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath];
-  const { stdout } = await runProcess(FFPROBE_PATH, args);
+  const { stdout } = await runProcess(ffprobeExecutablePath, args);
   const parsed = JSON.parse(stdout || '{}');
 
   if (!Array.isArray(parsed.streams) || !parsed.streams.length) {
@@ -852,9 +902,7 @@ function buildMetadataEntries(item, ext) {
 }
 
 async function writeMetadataWithFfmpegToTarget(item, targetPath) {
-  if (!ffmpegPath) {
-    throw new Error('ffmpeg 不可用');
-  }
+  const ffmpegExecutablePath = await getFfmpegExecutablePath();
 
   await probeMedia(item.path);
 
@@ -892,14 +940,14 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
 
   const tempPath = buildTempOutputPath(targetPath);
   try {
-    await runProcess(ffmpegPath, buildArgs(tempPath, false));
+    await runProcess(ffmpegExecutablePath, buildArgs(tempPath, false));
     await replaceFileFromTemp(tempPath, targetPath);
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
     if (ext === '.wav') {
       const retryTempPath = buildTempOutputPath(targetPath);
       try {
-        await runProcess(ffmpegPath, buildArgs(retryTempPath, true));
+        await runProcess(ffmpegExecutablePath, buildArgs(retryTempPath, true));
         await replaceFileFromTemp(retryTempPath, targetPath);
         return;
       } catch (retryError) {
