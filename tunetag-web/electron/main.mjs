@@ -72,15 +72,23 @@ async function ensureExecutableBinary(sourcePath, binaryName) {
 }
 
 async function getFfprobeExecutablePath() {
-  const resolved = await ensureExecutableBinary(FFPROBE_PATH, 'ffprobe');
-  if (!resolved) throw new Error('ffprobe 不可用');
-  return resolved;
+  try {
+    const resolved = await ensureExecutableBinary(FFPROBE_PATH, 'ffprobe');
+    if (resolved) return resolved;
+  } catch {
+    // fallback to system ffprobe
+  }
+  return 'ffprobe';
 }
 
 async function getFfmpegExecutablePath() {
-  const resolved = await ensureExecutableBinary(FFMPEG_PATH, 'ffmpeg');
-  if (!resolved) throw new Error('ffmpeg 不可用');
-  return resolved;
+  try {
+    const resolved = await ensureExecutableBinary(FFMPEG_PATH, 'ffmpeg');
+    if (resolved) return resolved;
+  } catch {
+    // fallback to system ffmpeg
+  }
+  return 'ffmpeg';
 }
 
 app.setName('TuneTag');
@@ -321,14 +329,18 @@ async function collectMediaFiles(inputPaths) {
   const output = [];
   const skipped = [];
   const seen = new Set();
+  const queue = [...(Array.isArray(inputPaths) ? inputPaths : [])];
 
-  async function walk(currentPath) {
+  while (queue.length) {
+    const currentPath = queue.shift();
+    if (!currentPath) continue;
+
     let stat;
     try {
       stat = await fs.stat(currentPath);
     } catch {
       skipped.push({ path: currentPath, reason: '文件不可访问' });
-      return;
+      continue;
     }
 
     if (stat.isDirectory()) {
@@ -337,27 +349,29 @@ async function collectMediaFiles(inputPaths) {
         entries = await fs.readdir(currentPath, { withFileTypes: true });
       } catch {
         skipped.push({ path: currentPath, reason: '目录不可访问' });
-        return;
+        continue;
       }
-      await Promise.all(entries.map((entry) => walk(path.join(currentPath, entry.name))));
-      return;
+
+      for (const entry of entries) {
+        queue.push(path.join(currentPath, entry.name));
+      }
+      continue;
     }
 
-    if (!stat.isFile()) return;
+    if (!stat.isFile()) continue;
 
     const ext = path.extname(currentPath).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.has(ext)) {
       skipped.push({ path: currentPath, reason: '格式不支持' });
-      return;
+      continue;
     }
 
     const normalized = path.resolve(currentPath);
-    if (seen.has(normalized)) return;
+    if (seen.has(normalized)) continue;
     seen.add(normalized);
     output.push(normalized);
   }
 
-  await Promise.all(inputPaths.map((p) => walk(p)));
   return { files: output, skipped };
 }
 
@@ -397,7 +411,19 @@ function readSourceTag(parsed) {
   }
 
   const native = parsed?.native ?? {};
-  const candidates = ['SOURCE', 'TSRC', 'TXXX:SOURCE', 'TXXX:Source', '----:com.apple.iTunes:SOURCE'];
+  const candidates = [
+    'IARL',
+    'SOURCE',
+    'TSRC',
+    'TXXX:SOURCE',
+    'TXXX:Source',
+    '----:com.apple.iTunes:SOURCE',
+    'WOAS',
+    'WXXX',
+    'TXXX:url',
+    'TXXX:URL',
+    'TXXX:WOAS'
+  ];
 
   for (const group of Object.values(native)) {
     for (const tag of group || []) {
@@ -408,8 +434,11 @@ function readSourceTag(parsed) {
       if (typeof value === 'string' && value.trim()) return value.trim();
       if (Array.isArray(value) && value.length) {
         const first = value[0];
-        if (typeof first === 'string' && first.trim()) return first.trim();
+        const parsedFirst = toDisplayValue(first);
+        if (parsedFirst) return parsedFirst;
       }
+      const parsedValue = toDisplayValue(value);
+      if (parsedValue) return parsedValue;
     }
   }
 
@@ -437,6 +466,14 @@ function normalizeTagText(value) {
     .normalize('NFC');
 }
 
+function looksLikeMojibake(value) {
+  const text = normalizeTagText(value);
+  if (!text) return false;
+  if (/[\u0000-\u001f]/u.test(text)) return true;
+  const weirdCount = (text.match(/[�]/gu) || []).length;
+  return weirdCount >= 2;
+}
+
 function decodeBufferToText(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return '';
   const hasUtf16Bom =
@@ -460,6 +497,9 @@ function toDisplayValue(value) {
   if (Array.isArray(value)) return value.map((item) => toDisplayValue(item)).filter(Boolean).join(', ');
   if (typeof value === 'object') {
     if (typeof value.text === 'string') return normalizeTagText(value.text);
+    if (typeof value.url === 'string') return normalizeTagText(value.url);
+    if (typeof value.description === 'string') return normalizeTagText(value.description);
+    if (typeof value.value === 'string') return normalizeTagText(value.value);
     if (typeof value.no === 'number' && typeof value.of === 'number') return `${value.no}/${value.of}`;
     if (typeof value.no === 'number') return String(value.no);
     return '';
@@ -474,6 +514,14 @@ function readCommonText(common, key) {
     return toDisplayValue(raw[0]);
   }
   return toDisplayValue(raw);
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = toDisplayValue(value);
+    if (text) return text;
+  }
+  return '';
 }
 
 function pictureToDataUrl(picture) {
@@ -599,7 +647,7 @@ function buildRawAttributes(parsed, stat, filePath, sourceTag) {
 function parseWavCommentAndSource(rawComment) {
   const text = toDisplayValue(rawComment);
   if (!text) {
-    return { note: '', source: '', genre: '', lyrics: '' };
+    return { title: '', artist: '', album: '', year: '', trackNo: '', note: '', source: '', genre: '', lyrics: '' };
   }
 
   const metaLine = text
@@ -611,10 +659,15 @@ function parseWavCommentAndSource(rawComment) {
     try {
       const payload = JSON.parse(Buffer.from(metaLine.slice(WAV_META_PREFIX.length).trim(), 'base64').toString('utf8'));
       return {
+        title: '',
+        artist: '',
+        album: '',
+        year: '',
+        trackNo: '',
         note: normalizeTagText(payload?.note),
         source: normalizeTagText(payload?.source),
-        genre: normalizeTagText(payload?.genre),
-        lyrics: normalizeTagText(payload?.lyrics)
+        genre: '',
+        lyrics: ''
       };
     } catch {
       // fallback to legacy format
@@ -624,43 +677,19 @@ function parseWavCommentAndSource(rawComment) {
   const lines = text
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line && !line.startsWith(WAV_META_PREFIX));
 
   const sourceLine = lines.find((line) => line.startsWith(WAV_SOURCE_PREFIX)) || '';
   const source = sourceLine.slice(WAV_SOURCE_PREFIX.length).trim();
   const note = lines.filter((line) => !line.startsWith(WAV_SOURCE_PREFIX)).join('\n').trim();
 
-  return { note, source, genre: '', lyrics: '' };
+  return { title: '', artist: '', album: '', year: '', trackNo: '', note, source, genre: '', lyrics: '' };
 }
 
-function composeWavComment(note, source, genre = '', lyrics = '') {
-  const noteText = toDisplayValue(note);
-  const sourceText = toDisplayValue(source);
-  const genreText = toDisplayValue(genre);
-  const lyricsText = toDisplayValue(lyrics);
-
-  const hasExtended = Boolean(sourceText || genreText || lyricsText);
-  if (hasExtended) {
-    const payload = {
-      note: noteText,
-      source: sourceText,
-      genre: genreText,
-      lyrics: lyricsText
-    };
-    const base64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
-    return `${WAV_META_PREFIX}${base64}`;
-  }
-
-  if (!sourceText) return noteText;
-  if (!noteText) return `${WAV_SOURCE_PREFIX}${sourceText}`;
-
-  const lines = noteText
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !line.startsWith(WAV_SOURCE_PREFIX));
-  lines.push(`${WAV_SOURCE_PREFIX}${sourceText}`);
-  return lines.join('\n');
+function composeWavComment(payload) {
+  // Standard-compat mode: do not write private metadata blob into WAV comment.
+  // Keep legacy TuneTagMeta read compatibility only.
+  return toDisplayValue(payload?.note);
 }
 
 async function probeWavTags(filePath) {
@@ -690,8 +719,67 @@ async function probeWavTags(filePath) {
     genre: get('genre'),
     lyrics: get('lyrics', 'lyric', 'comment'),
     comment: get('comment', 'description'),
+    source: get('IARL', 'source', 'url', 'website'),
     trackNo: get('track')
   };
+}
+
+function readWavId3Tags(filePath) {
+  try {
+    const parsed = NodeID3.read(filePath) || {};
+    const comment = parsed?.comment?.text || '';
+    const lyrics = parsed?.unsynchronisedLyrics?.text || '';
+    return {
+      title: normalizeTagText(parsed?.title),
+      artist: normalizeTagText(parsed?.artist),
+      album: normalizeTagText(parsed?.album),
+      year: normalizeTagText(parsed?.year),
+      trackNo: normalizeTagText(parsed?.trackNumber),
+      genre: normalizeTagText(parsed?.genre),
+      note: normalizeTagText(comment),
+      source: normalizeTagText(parsed?.audioSourceUrl),
+      lyrics: normalizeTagText(lyrics),
+      rawTitle: normalizeTagText(parsed?.raw?.TIT2),
+      rawArtist: normalizeTagText(parsed?.raw?.TPE1),
+      rawGenre: normalizeTagText(parsed?.raw?.TCON),
+      rawLyrics: normalizeTagText(parsed?.raw?.USLT?.text || ''),
+      rawComment: normalizeTagText(parsed?.raw?.COMM?.text || ''),
+      rawSource: normalizeTagText(parsed?.raw?.WOAS)
+    };
+  } catch {
+    return {
+      title: '',
+      artist: '',
+      album: '',
+      year: '',
+      trackNo: '',
+      genre: '',
+      note: '',
+      source: '',
+      lyrics: '',
+      rawTitle: '',
+      rawArtist: '',
+      rawGenre: '',
+      rawLyrics: '',
+      rawComment: '',
+      rawSource: ''
+    };
+  }
+}
+
+async function readWhereFroms(filePath) {
+  if (process.platform !== 'darwin') return '';
+  try {
+    const { stdout } = await runProcess('mdls', ['-raw', '-name', 'kMDItemWhereFroms', filePath]);
+    const raw = String(stdout || '').trim();
+    if (!raw || raw === '(null)') return '';
+    const quoted = raw.match(/"([^"]+)"/u);
+    if (quoted?.[1]) return normalizeTagText(quoted[1]);
+    const plain = raw.replace(/[()\n]/g, ' ').trim();
+    return normalizeTagText(plain);
+  } catch {
+    return '';
+  }
 }
 
 async function readMetadata(filePath) {
@@ -707,45 +795,80 @@ async function readMetadata(filePath) {
     const formatInfo = parsed.format ?? {};
     const stat = await fs.stat(filePath);
     const sourceTag = readSourceTag(parsed);
+    const whereFromSource = await readWhereFroms(filePath);
     const wavTags = ext === '.wav' ? await probeWavTags(filePath).catch(() => null) : null;
+    const wavId3 = ext === '.wav' ? readWavId3Tags(filePath) : null;
     const hasEmbeddedCover = Array.isArray(common.picture) && common.picture.length > 0;
     const embeddedCoverDataUrl = '';
     const embeddedCoverPath = '';
     const fallbackComment = readCommentTag(parsed);
-    const wavComment = wavTags?.comment || '';
+    const wavComment = firstNonEmpty(wavTags?.comment, fallbackComment);
     const wavParsed = parseWavCommentAndSource(wavComment);
     const commonTitle = readCommonText(common, 'title');
     const commonArtist = readCommonText(common, 'artist');
     const commonAlbum = readCommonText(common, 'album');
     const commonGenre = readCommonText(common, 'genre');
     const commonLyrics = readCommonText(common, 'lyrics');
+    const wavNativeTitle = readNativeFirst(parsed, ['TIT2']);
+    const wavNativeArtist = readNativeFirst(parsed, ['TPE1']);
+    const wavNativeAlbum = readNativeFirst(parsed, ['TALB']);
+    const wavNativeGenre = readNativeFirst(parsed, ['TCON']);
+    const wavNativeLyrics = readNativeFirst(parsed, ['USLT']);
+    const wavNativeTrackNo = readNativeFirst(parsed, ['TRCK']);
+    const wavNativeSource = readNativeFirst(parsed, ['WOAS', 'WXXX', 'TXXX:url', 'SOURCE', 'TXXX:SOURCE']);
     const resolvedTitle = ext === '.wav'
-      ? (wavTags?.title || commonTitle || fileStem)
+      ? (
+        wavId3?.title ||
+        wavTags?.title ||
+        (!looksLikeMojibake(wavNativeTitle) ? wavNativeTitle : '') ||
+        (!looksLikeMojibake(commonTitle) ? commonTitle : '') ||
+        fileStem
+      )
       : (commonTitle || fileStem);
-    const resolvedArtist = ext === '.wav' ? (wavTags?.artist || commonArtist || '') : (commonArtist || '');
-    const resolvedAlbum = ext === '.wav' ? (wavTags?.album || commonAlbum || '') : (commonAlbum || '');
+    const resolvedArtist = ext === '.wav'
+      ? (
+        wavId3?.artist ||
+        wavTags?.artist ||
+        (!looksLikeMojibake(wavNativeArtist) ? wavNativeArtist : '') ||
+        (!looksLikeMojibake(commonArtist) ? commonArtist : '') ||
+        ''
+      )
+      : (commonArtist || '');
+    const resolvedAlbum = ext === '.wav'
+      ? (
+        wavId3?.album ||
+        wavTags?.album ||
+        (!looksLikeMojibake(wavNativeAlbum) ? wavNativeAlbum : '') ||
+        (!looksLikeMojibake(commonAlbum) ? commonAlbum : '') ||
+        ''
+      )
+      : (commonAlbum || '');
     const resolvedYear =
       ext === '.wav'
-        ? (wavTags?.year || (common.year ? String(common.year) : ''))
+        ? (wavId3?.year || wavTags?.year || (common.year ? String(common.year) : '') || '')
         : (common.year ? String(common.year) : '');
-    const resolvedTrackNo = ext === '.wav' ? (wavTags?.trackNo || toTrackNo(common.track)) : toTrackNo(common.track);
+    const resolvedTrackNo = ext === '.wav'
+      ? (wavId3?.trackNo || wavTags?.trackNo || wavNativeTrackNo || toTrackNo(common.track) || '')
+      : toTrackNo(common.track);
     const resolvedGenre = ext === '.wav'
-      ? (wavParsed.genre || wavTags?.genre || commonGenre || '')
+      ? (wavId3?.genre || wavTags?.genre || wavNativeGenre || commonGenre || '')
       : (commonGenre || '');
     const resolvedLyrics = ext === '.wav'
-      ? (wavParsed.lyrics || wavTags?.lyrics || commonLyrics || '')
+      ? (wavId3?.lyrics || wavNativeLyrics || wavTags?.lyrics || commonLyrics || '')
       : (commonLyrics || '');
-    const resolvedNote = ext === '.wav' ? (wavParsed.note || fallbackComment) : fallbackComment;
-    const resolvedSource = ext === '.wav' ? (wavParsed.source || sourceTag) : sourceTag;
-    const rawTIT2 = ext === '.wav' ? resolvedTitle : (readNativeFirst(parsed, ['TIT2']) || resolvedTitle);
-    const rawTPE1 = ext === '.wav' ? resolvedArtist : (readNativeFirst(parsed, ['TPE1']) || resolvedArtist);
-    const rawTCON = ext === '.wav' ? resolvedGenre : (readNativeFirst(parsed, ['TCON']) || resolvedGenre);
-    const rawUSLT = ext === '.wav' ? resolvedLyrics : (readNativeFirst(parsed, ['USLT']) || resolvedLyrics);
+    const resolvedNote = ext === '.wav' ? (wavId3?.note || wavParsed.note || wavTags?.comment || fallbackComment) : fallbackComment;
+    const resolvedSource = ext === '.wav'
+      ? (wavId3?.source || wavTags?.source || wavParsed.source || wavNativeSource || sourceTag || whereFromSource)
+      : (sourceTag || whereFromSource);
+    const rawTIT2 = ext === '.wav' ? (wavId3?.rawTitle || resolvedTitle) : (readNativeFirst(parsed, ['TIT2']) || resolvedTitle);
+    const rawTPE1 = ext === '.wav' ? (wavId3?.rawArtist || resolvedArtist) : (readNativeFirst(parsed, ['TPE1']) || resolvedArtist);
+    const rawTCON = ext === '.wav' ? (wavId3?.rawGenre || resolvedGenre) : (readNativeFirst(parsed, ['TCON']) || resolvedGenre);
+    const rawUSLT = ext === '.wav' ? (wavId3?.rawLyrics || resolvedLyrics) : (readNativeFirst(parsed, ['USLT']) || resolvedLyrics);
     const rawCOMM = ext === '.wav'
-      ? resolvedNote
+      ? (wavId3?.rawComment || resolvedNote)
       : (readNativeFirst(parsed, ['COMM', 'TXXX:comment']) || resolvedNote);
     const rawWOAS = ext === '.wav'
-      ? resolvedSource
+      ? (wavId3?.rawSource || resolvedSource)
       : (readNativeFirst(parsed, ['WOAS', 'WXXX', 'TXXX:url']) || resolvedSource);
 
     return {
@@ -877,34 +1000,70 @@ async function probeMedia(filePath) {
 function buildMetadataEntries(item, ext) {
   const normalizeValue = (value) => normalizeTagText(value);
 
-  const isRawFirst = ext === '.mp3' || ext === '.wav';
-  const title = normalizeValue(isRawFirst ? (item.rawTIT2 || item.title) : item.title);
-  const artist = normalizeValue(isRawFirst ? (item.rawTPE1 || item.artist) : item.artist);
-  const genre = normalizeValue(isRawFirst ? (item.rawTCON || item.genre) : item.genre);
-  const lyrics = normalizeValue(isRawFirst ? (item.rawUSLT || item.lyrics) : item.lyrics);
-  const note = normalizeValue(isRawFirst ? (item.rawCOMM || item.note) : item.note);
-  const source = normalizeValue(isRawFirst ? (item.rawWOAS || item.source) : item.source);
-  const wavComment = ext === '.wav' ? composeWavComment(note, source, genre, lyrics) : note;
+  const title = normalizeValue(item.title || item.rawTIT2);
+  const artist = normalizeValue(item.artist || item.rawTPE1);
+  const genre = normalizeValue(item.genre || item.rawTCON);
+  const lyrics = normalizeValue(item.lyrics || item.rawUSLT);
+  const note = normalizeValue(item.note || item.rawCOMM);
+  const source = normalizeValue(item.source || item.rawWOAS);
+  const wavComment = ext === '.wav'
+    ? composeWavComment({
+      title,
+      artist,
+      album: normalizeValue(item.album),
+      year: normalizeValue(item.year),
+      trackNo: normalizeValue(item.trackNo),
+      note,
+      source,
+      genre,
+      lyrics
+    })
+    : note;
 
   const entries = [
     ['title', title],
     ['artist', artist],
     ['album', normalizeValue(item.album)],
     ['date', normalizeValue(item.year)],
-    ['genre', ext === '.wav' ? '' : genre],
-    ['lyrics', ext === '.wav' ? '' : lyrics],
+    ['genre', genre],
+    ['lyrics', lyrics],
     ['comment', wavComment],
-    ['source', ext === '.wav' ? '' : source],
+    ['source', source],
     ['track', normalizeValue(item.trackNo)]
   ];
+  if (ext === '.wav' && source) {
+    entries.push(['IARL', source]);
+  }
 
-  return entries.filter(([, value]) => value.length > 0);
+  return entries;
+}
+
+async function writeWavId3Overlay(item, targetPath) {
+  const tags = {
+    title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
+    artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
+    album: normalizeTagText(item.album) || undefined,
+    year: normalizeTagText(item.year) || undefined,
+    genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
+    trackNumber: normalizeTagText(item.trackNo) || undefined,
+    audioSourceUrl: normalizeTagText(item.rawWOAS || item.source) || undefined,
+    unsynchronisedLyrics: {
+      language: 'eng',
+      text: normalizeTagText(item.rawUSLT || item.lyrics)
+    },
+    comment: {
+      language: 'eng',
+      text: normalizeTagText(item.rawCOMM || item.note)
+    }
+  };
+  const ok = NodeID3.update(tags, targetPath);
+  if (!ok) {
+    throw new Error('WAV ID3 标签写入失败');
+  }
 }
 
 async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   const ffmpegExecutablePath = await getFfmpegExecutablePath();
-
-  await probeMedia(item.path);
 
   const ext = path.extname(targetPath).toLowerCase();
   const coverPath = typeof item.coverPath === 'string' ? item.coverPath.trim() : '';
@@ -917,7 +1076,7 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
     } else {
       args.push('-map', '0');
     }
-    args.push('-map_metadata', '-1');
+    args.push('-map_metadata', '0');
 
     for (const [key, value] of buildMetadataEntries(item, ext)) {
       args.push('-metadata', `${key}=${value}`);
@@ -942,6 +1101,9 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   try {
     await runProcess(ffmpegExecutablePath, buildArgs(tempPath, false));
     await replaceFileFromTemp(tempPath, targetPath);
+    if (ext === '.wav') {
+      await writeWavId3Overlay(item, targetPath);
+    }
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
     if (ext === '.wav') {
@@ -949,6 +1111,7 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
       try {
         await runProcess(ffmpegExecutablePath, buildArgs(retryTempPath, true));
         await replaceFileFromTemp(retryTempPath, targetPath);
+        await writeWavId3Overlay(item, targetPath);
         return;
       } catch (retryError) {
         await fs.rm(retryTempPath, { force: true }).catch(() => {});
@@ -961,10 +1124,26 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
 
 async function writeMp3WithNodeId3ToTarget(item, targetPath) {
   const tempPath = buildTempOutputPath(targetPath);
-  await fs.copyFile(item.path, tempPath);
-
   if (item.removeCover) {
-    NodeID3.removeTags(tempPath);
+    const ffmpegExecutablePath = await getFfmpegExecutablePath();
+    const stripCoverArgs = [
+      '-y',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      item.path,
+      '-map',
+      '0:a',
+      '-map_metadata',
+      '0',
+      '-c:a',
+      'copy',
+      tempPath
+    ];
+    await runProcess(ffmpegExecutablePath, stripCoverArgs);
+  } else {
+    await fs.copyFile(item.path, tempPath);
   }
 
   const tags = {
@@ -1047,6 +1226,47 @@ async function replaceFileFromTemp(tempPath, targetPath) {
 
   await fs.copyFile(tempPath, targetPath);
   await fs.rm(tempPath, { force: true }).catch(() => {});
+}
+
+async function syncMacSpotlightMetadata(targetPath, item) {
+  if (process.platform !== 'darwin') return;
+
+  const title = normalizeTagText(item.title || item.rawTIT2);
+  const artist = normalizeTagText(item.artist || item.rawTPE1);
+  const album = normalizeTagText(item.album);
+  const note = normalizeTagText(item.note || item.rawCOMM);
+  const source = normalizeTagText(item.source || item.rawWOAS);
+  const genre = normalizeTagText(item.genre || item.rawTCON);
+  const yearText = normalizeTagText(item.year);
+  const year = /^\d{4}$/u.test(yearText) ? Number(yearText) : null;
+
+  const payload = {
+    kMDItemTitle: title || null,
+    kMDItemAuthors: artist ? [artist] : null,
+    kMDItemAlbum: album || null,
+    kMDItemComment: note || null,
+    kMDItemFinderComment: note || null,
+    kMDItemMusicalGenre: genre || null,
+    kMDItemRecordingYear: Number.isFinite(year) ? year : null,
+    kMDItemWhereFroms: source ? [source] : null
+  };
+
+  const script = `
+import sys, json, plistlib, binascii, subprocess
+path = sys.argv[1]
+payload = json.loads(sys.argv[2])
+for key, value in payload.items():
+    attr = f"com.apple.metadata:{key}"
+    if value is None or value == "" or value == []:
+        subprocess.run(["xattr", "-d", attr, path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        continue
+    data = plistlib.dumps(value, fmt=plistlib.FMT_BINARY)
+    hexv = binascii.hexlify(data).decode("ascii")
+    subprocess.check_call(["xattr", "-wx", attr, hexv, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+`.trim();
+
+  await runProcess('python3', ['-c', script, targetPath, JSON.stringify(payload)]);
+  await runProcess('mdimport', [targetPath]).catch(() => {});
 }
 
 async function isSameFilePath(a, b) {
@@ -1134,7 +1354,7 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
   });
 
   if (folderResult.canceled || !folderResult.filePaths.length) {
-    return { canceled: true, success: 0, failed: 0, failures: [] };
+    return { canceled: true, success: 0, failed: 0, failures: [], warnings: [] };
   }
 
   const targetDirectory = folderResult.filePaths[0];
@@ -1142,6 +1362,7 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
   let completed = 0;
   let success = 0;
   const failures = [];
+  const warnings = [];
   const exported = [];
   let conflictPolicy = null; // 'overwrite' | 'keep-both' | 'skip'
 
@@ -1166,12 +1387,12 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
         const conflictAnswer = await dialog.showMessageBox(ownerWindow, {
           type: 'question',
           buttons: ['覆盖', '保留', '跳过'],
-          defaultId: sameAsSource ? 1 : 0,
+          defaultId: 0,
           cancelId: 2,
           title: '文件名冲突',
           message: `目标文件已存在：${baseName}`,
           detail: sameAsSource
-            ? '该文件与原文件是同一路径。是否覆盖原文件？'
+            ? '该文件与原文件是同一路径。请选择“覆盖”以直接改写原文件。'
             : '你希望如何处理这个同名文件？',
           checkboxLabel: '全部应用',
           checkboxChecked: false
@@ -1211,6 +1432,14 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
       } else {
         await writeMetadataWithFfmpegToTarget(item, outputPath);
       }
+      try {
+        await syncMacSpotlightMetadata(outputPath, item);
+      } catch (syncError) {
+        warnings.push({
+          path: item.path,
+          reason: syncError instanceof Error ? syncError.message : '系统属性同步失败'
+        });
+      }
       success += 1;
       exported.push({ sourcePath: item.path, outputPath });
     } catch (error) {
@@ -1226,5 +1455,13 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
     event.sender.send('save-progress', { completed, total });
   }
 
-  return { canceled: false, targetDirectory, success, failed: failures.length, failures, exported };
+  return {
+    canceled: false,
+    targetDirectory,
+    success,
+    failed: failures.length,
+    failures,
+    warnings,
+    exported
+  };
 });

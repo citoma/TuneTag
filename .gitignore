@@ -15,6 +15,13 @@ build/
 coverage/
 **/dist/
 **/build/
+release/
+release-slim/
+release-icon-test/
+**/release/
+**/release-slim/
+**/release-icon-test/
+*.dmg
 
 # Env files
 .env

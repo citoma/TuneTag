@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import type { Track } from './types/tunetag';
 
@@ -398,6 +398,7 @@ function App() {
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [saveMessage, setSaveMessage] = useState('');
   const [saveFailures, setSaveFailures] = useState<Array<{ path: string; reason: string }>>([]);
+  const [saveWarnings, setSaveWarnings] = useState<Array<{ path: string; reason: string }>>([]);
   const [fieldHistory, setFieldHistory] = useState<FieldHistory>(() => loadFieldHistory());
   const [batchPresets, setBatchPresets] = useState<BatchPreset[]>(() => loadBatchPresets());
   const [activeBatchPresetId, setActiveBatchPresetId] = useState('');
@@ -447,17 +448,6 @@ function App() {
   useEffect(() => {
     if (!api) return;
     const unsubscribe = api.onSaveProgress((payload) => setProgress(payload));
-    return unsubscribe;
-  }, [api]);
-
-  useEffect(() => {
-    if (!api?.onExternalOpenPaths) return;
-    const unsubscribe = api.onExternalOpenPaths((paths) => {
-      if (!paths.length) return;
-      importPaths(paths).catch(() => {
-        setSaveMessage('通过“打开方式”导入文件失败，请重试');
-      });
-    });
     return unsubscribe;
   }, [api]);
 
@@ -542,7 +532,7 @@ function App() {
     };
   }, [api, selectedTracks, updateTrack]);
 
-  async function importPaths(paths: string[]) {
+  const importPaths = useCallback(async (paths: string[]) => {
     if (!api) {
       setSaveMessage('请在 Electron 桌面应用中运行（浏览器模式不支持本地文件能力）');
       return;
@@ -554,7 +544,18 @@ function App() {
     if (duplicates > 0) parts.push(`重复 ${duplicates} 个`);
     if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 个（不支持或不可访问）`);
     setSaveMessage(parts.join('，'));
-  }
+  }, [api, appendTracks]);
+
+  useEffect(() => {
+    if (!api?.onExternalOpenPaths) return;
+    const unsubscribe = api.onExternalOpenPaths((paths) => {
+      if (!paths.length) return;
+      importPaths(paths).catch(() => {
+        setSaveMessage('通过“打开方式”导入文件失败，请重试');
+      });
+    });
+    return unsubscribe;
+  }, [api, importPaths]);
 
   async function onLandingBrandClick() {
     const target = 'https://fengsound.top/';
@@ -745,6 +746,7 @@ function App() {
 
     setSaving(true);
     setSaveFailures([]);
+    setSaveWarnings([]);
     setProgress({ completed: 0, total: targetTracks.length });
 
     try {
@@ -775,6 +777,7 @@ function App() {
         return;
       }
       setSaveFailures(result.failures || []);
+      setSaveWarnings(result.warnings || []);
       const failedSet = new Set(result.failures.map((f) => f.path));
       const okIds = targetTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
 
@@ -790,8 +793,10 @@ function App() {
           ['rawWOAS', track.rawWOAS]
         ] as Array<[HistoryKey, string]>))
       );
+      const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
+      const warningSuffix = warningCount > 0 ? `；系统属性同步警告 ${warningCount} 个` : '';
       setSaveMessage(
-        `${messagePrefix} ${result.targetDirectory || '目标文件夹'}：成功 ${result.success} 个；失败 ${result.failed} 个`
+        `${messagePrefix} ${result.targetDirectory || '目标文件夹'}：成功 ${result.success} 个；失败 ${result.failed} 个${warningSuffix}`
       );
     } catch {
       setSaveMessage('保存异常，请重试');
@@ -1401,6 +1406,19 @@ function App() {
             <ul>
               {saveFailures.map((item) => (
                 <li key={`${item.path}-${item.reason}`}>
+                  <span title={item.path}>{item.path}</span>
+                  <strong>{item.reason}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {saveWarnings.length > 0 && (
+          <div className="failure-panel">
+            <div className="failure-title">系统属性同步警告（{saveWarnings.length}）</div>
+            <ul>
+              {saveWarnings.map((item) => (
+                <li key={`${item.path}-${item.reason}-warning`}>
                   <span title={item.path}>{item.path}</span>
                   <strong>{item.reason}</strong>
                 </li>

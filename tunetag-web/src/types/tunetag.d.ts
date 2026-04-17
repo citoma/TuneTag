@@ -68,6 +68,7 @@ declare global {
         success: number;
         failed: number;
         failures: Array<{ path: string; reason: string }>;
+        warnings: Array<{ path: string; reason: string }>;
         exported: Array<{ sourcePath: string; outputPath: string }>;
       }>;
       onSaveProgress: (callback: (payload: { completed: number; total: number }) => void) => () => void;
