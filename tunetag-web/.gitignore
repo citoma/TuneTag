@@ -10,7 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+release
 *.local
+
+# Generated icon intermediates
+electron/assets/app-icon.iconset
+electron/assets/*-backup.png
+public/*-backup.png
 
 # Editor directories and files
 .vscode/*

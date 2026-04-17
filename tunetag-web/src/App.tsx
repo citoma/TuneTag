@@ -115,7 +115,7 @@ const useStore = create<AppState>((set, get) => ({
       return {
         ...candidate,
         dirty,
-        status: dirty ? ('dirty' as const) : ('clean' as const),
+        status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
         errorMessage: ''
       };
     });
@@ -147,7 +147,7 @@ const useStore = create<AppState>((set, get) => ({
       return {
         ...candidate,
         dirty,
-        status: dirty ? ('dirty' as const) : ('clean' as const),
+        status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
         errorMessage: ''
       };
     });
@@ -199,7 +199,7 @@ const useStore = create<AppState>((set, get) => ({
     const { tracks, originals } = get();
     const nextTracks = tracks.map((track) => {
       if (okSet.has(track.id)) {
-        return { ...track, dirty: false, status: 'clean' as const, errorMessage: '' };
+        return { ...track, dirty: false, status: 'exported' as const, errorMessage: '' };
       }
       const reason = failMap.get(track.path);
       if (reason) {
@@ -222,6 +222,7 @@ const useStore = create<AppState>((set, get) => ({
 function statusLabel(track: Track) {
   if (track.status === 'error') return '保存失败';
   if (track.status === 'dirty') return '已修改';
+  if (track.status === 'exported') return '已导出';
   return '未修改';
 }
 
@@ -339,6 +340,16 @@ function App() {
     setSaveMessage(parts.join('，'));
   }
 
+  async function onLandingBrandClick() {
+    const target = 'https://fengsound.top/';
+    if (api?.openExternalUrl) {
+      const ok = await api.openExternalUrl(target);
+      if (!ok) window.open(target, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    window.open(target, '_blank', 'noopener,noreferrer');
+  }
+
   async function onPickFiles() {
     if (!api) {
       setSaveMessage('请在 Electron 桌面应用中运行（浏览器模式不支持选择本地文件）');
@@ -412,23 +423,21 @@ function App() {
       rawWOAS: allowSource ? batchForm.rawWOAS.trim() : '',
       rawCOMM: allowNote ? batchForm.rawCOMM.trim() : ''
     };
-    const hasAny = Object.values(normalized).some((v) => v.length > 0);
-    if (!hasAny) {
-      setSaveMessage('请至少填写一个要批量应用的字段');
-      return;
-    }
 
     bulkUpdate(selectedIds, (track) => {
-      const nextTitle = normalized.title || track.title;
-      const nextArtist = normalized.artist || track.artist;
-      const nextSource = normalized.rawWOAS || track.source;
-      const nextNote = normalized.rawCOMM || track.note;
+      const nextTitle = normalized.title ? normalized.title : track.title;
+      const nextArtist = normalized.artist ? normalized.artist : track.artist;
+      const nextAlbum = normalized.album;
+      const nextYear = normalized.year;
+      const nextTrackNo = normalized.trackNo;
+      const nextSource = allowSource ? normalized.rawWOAS : track.source;
+      const nextNote = allowNote ? normalized.rawCOMM : track.note;
       return {
         title: nextTitle,
         artist: nextArtist,
-        album: normalized.album || track.album,
-        year: normalized.year || track.year,
-        trackNo: normalized.trackNo || track.trackNo,
+        album: nextAlbum,
+        year: nextYear,
+        trackNo: nextTrackNo,
         source: nextSource,
         note: nextNote,
         rawTIT2: nextTitle,
@@ -559,7 +568,9 @@ function App() {
             <span>支持 MP3 / FLAC / WAV / M4A</span>
             <span>支持批量导入</span>
           </div>
-          <div className="landing-brand">奇趣实验室 出品</div>
+          <button type="button" className="landing-brand-link" onClick={onLandingBrandClick}>
+            奇趣实验室 X 风声 联合出品
+          </button>
         </main>
       </div>
     );
@@ -697,7 +708,12 @@ function App() {
           </>
         )}
 
-        <button className="primary" onClick={applyBatch}>应用到选中文件（仅覆盖已填写字段）</button>
+        <button className="primary" onClick={applyBatch}>应用到选中文件</button>
+        <p className="field-tip batch-apply-tip">
+          标题、艺术家留空：不修改
+          <br />
+          其它字段留空：清空写入
+        </p>
       </div>
     );
   }
@@ -768,7 +784,7 @@ function App() {
                         <td title={track.artist}>{track.artist}</td>
                         <td title={track.album}>{track.album}</td>
                         <td>{track.year}</td>
-                        <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : ''}>
+                        <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : track.status === 'exported' ? 'status-exported' : ''}>
                           {statusLabel(track)}
                         </td>
                       </tr>

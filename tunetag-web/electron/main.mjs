@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -16,8 +16,19 @@ const WAV_SOURCE_PREFIX = '[TuneTagSource] ';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const APP_ICON_CANDIDATES = [
+  path.join(__dirname, 'assets', 'app-icon.png'),
+  path.join(__dirname, '..', 'electron', 'assets', 'app-icon.png'),
+  path.join(__dirname, '..', 'public', 'app-icon.png'),
+  path.join(process.resourcesPath, 'app-icon.png')
+];
+const APP_ICON_PATH = APP_ICON_CANDIDATES.find((candidate) => existsSync(candidate));
+
+app.setName('TuneTag');
 
 function createWindow() {
+  const devUrl = 'http://localhost:5173';
+  const isDev = !app.isPackaged;
   const mainWindow = new BrowserWindow({
     width: 1360,
     height: 860,
@@ -25,6 +36,7 @@ function createWindow() {
     minHeight: 700,
     title: 'TuneTag',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -33,9 +45,26 @@ function createWindow() {
     }
   });
 
-  const devUrl = 'http://localhost:5173';
   const prodPath = path.join(__dirname, '..', 'dist', 'index.html');
-  const isDev = !app.isPackaged;
+
+  const openExternalIfNeeded = (targetUrl) => {
+    const url = String(targetUrl || '');
+    if (!/^https?:\/\//i.test(url)) return false;
+    if (isDev && url.startsWith(devUrl)) return false;
+    shell.openExternal(url).catch(() => {});
+    return true;
+  };
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (openExternalIfNeeded(url)) return { action: 'deny' };
+    return { action: 'allow' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (openExternalIfNeeded(url)) {
+      event.preventDefault();
+    }
+  });
 
   if (isDev) {
     let retries = 0;
@@ -81,6 +110,13 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && APP_ICON_PATH) {
+    const dockIcon = nativeImage.createFromPath(APP_ICON_PATH);
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -691,6 +727,17 @@ ipcMain.handle('pick-cover-image', async () => {
   return result.canceled || !result.filePaths.length ? '' : result.filePaths[0];
 });
 
+ipcMain.handle('open-external-url', async (_event, url) => {
+  const target = typeof url === 'string' ? url.trim() : '';
+  if (!/^https?:\/\//i.test(target)) return false;
+  try {
+    await shell.openExternal(target);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle('import-paths', async (_event, inputPaths) => {
   const { files, skipped } = await collectMediaFiles(inputPaths || []);
   const tracks = await Promise.all(files.map((filePath) => readMetadata(filePath)));
@@ -705,6 +752,7 @@ ipcMain.handle('get-embedded-cover', async (_event, filePath) => {
 });
 
 ipcMain.handle('save-tracks', async (event, tracks) => {
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender) || undefined;
   const folderResult = await dialog.showOpenDialog({
     title: '选择保存文件夹',
     buttonLabel: '保存到此文件夹',
@@ -723,10 +771,41 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
 
   for (const item of tracks || []) {
     const ext = path.extname(item.path || '').toLowerCase();
-    let outputPath = await resolveUniqueOutputPath(targetDirectory, path.basename(item.path || 'untitled'));
-    if (await isSameFilePath(item.path || '', outputPath)) {
-      const parsed = path.parse(path.basename(item.path || 'untitled'));
-      outputPath = await resolveUniqueOutputPath(targetDirectory, `${parsed.name} (copy)${parsed.ext}`);
+    const baseName = path.basename(item.path || 'untitled');
+    const directOutputPath = path.join(targetDirectory, baseName);
+    let outputPath = directOutputPath;
+    let exists = false;
+    try {
+      await fs.access(directOutputPath);
+      exists = true;
+    } catch {
+      exists = false;
+    }
+
+    if (exists) {
+      const sameAsSource = await isSameFilePath(item.path || '', directOutputPath);
+      const conflictAnswer = await dialog.showMessageBox(ownerWindow, {
+        type: 'question',
+        buttons: ['覆盖', '保留两者', '跳过'],
+        defaultId: sameAsSource ? 1 : 0,
+        cancelId: 2,
+        title: '文件名冲突',
+        message: `目标文件已存在：${baseName}`,
+        detail: sameAsSource
+          ? '该文件与原文件是同一路径。是否覆盖原文件？'
+          : '你希望如何处理这个同名文件？'
+      });
+
+      if (conflictAnswer.response === 0) {
+        outputPath = directOutputPath;
+      } else if (conflictAnswer.response === 1) {
+        outputPath = await resolveUniqueOutputPath(targetDirectory, baseName);
+      } else {
+        failures.push({ path: item.path, reason: '已跳过（同名未覆盖）' });
+        completed += 1;
+        event.sender.send('save-progress', { completed, total });
+        continue;
+      }
     }
 
     if (!WRITABLE_EXTENSIONS.has(ext)) {

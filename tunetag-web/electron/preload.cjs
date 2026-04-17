@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('tunetag', {
   },
   importPaths: (paths) => ipcRenderer.invoke('import-paths', paths),
   getEmbeddedCover: (filePath) => ipcRenderer.invoke('get-embedded-cover', filePath),
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
   saveTracks: (tracks) => ipcRenderer.invoke('save-tracks', tracks),
   onSaveProgress: (callback) => {
     const handler = (_event, payload) => callback(payload);

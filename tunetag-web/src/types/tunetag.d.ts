@@ -1,4 +1,4 @@
-export type TrackStatus = 'clean' | 'dirty' | 'error';
+export type TrackStatus = 'clean' | 'dirty' | 'exported' | 'error';
 
 export type Track = {
   id: string;
@@ -45,6 +45,7 @@ declare global {
       pickCoverImage: () => Promise<string>;
       getPathForFile: (file: File) => string;
       importPaths: (paths: string[]) => Promise<ImportResult>;
+      openExternalUrl: (url: string) => Promise<boolean>;
       getEmbeddedCover: (filePath: string) => Promise<{
         hasEmbeddedCover: boolean;
         embeddedCoverPath: string;
