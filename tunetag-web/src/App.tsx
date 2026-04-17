@@ -18,9 +18,18 @@ type BatchForm = {
 
 type HistoryKey = 'title' | 'artist' | 'album' | 'year' | 'genre' | 'trackNo' | 'rawWOAS';
 type FieldHistory = Record<HistoryKey, string[]>;
+type BatchPreset = {
+  id: string;
+  name: string;
+  form: BatchForm;
+  createdAt: number;
+  updatedAt: number;
+};
 
 const HISTORY_STORAGE_KEY = 'tunetag.fieldHistory.v1';
+const BATCH_PRESET_STORAGE_KEY = 'tunetag.batchPresets.v1';
 const HISTORY_LIMIT = 8;
+const BATCH_PRESET_LIMIT = 50;
 
 function emptyFieldHistory(): FieldHistory {
   return {
@@ -74,6 +83,64 @@ function pushHistoryEntries(history: FieldHistory, entries: Array<[HistoryKey, s
     next[key] = [value, ...next[key].filter((item) => item !== value)].slice(0, HISTORY_LIMIT);
   }
   return next;
+}
+
+function emptyBatchForm(): BatchForm {
+  return {
+    title: '',
+    artist: '',
+    album: '',
+    year: '',
+    genre: '',
+    lyrics: '',
+    trackNo: '',
+    rawWOAS: '',
+    rawCOMM: ''
+  };
+}
+
+function normalizeBatchForm(form: BatchForm): BatchForm {
+  return {
+    title: String(form.title || ''),
+    artist: String(form.artist || ''),
+    album: String(form.album || ''),
+    year: String(form.year || ''),
+    genre: String(form.genre || ''),
+    lyrics: String(form.lyrics || ''),
+    trackNo: String(form.trackNo || ''),
+    rawWOAS: String(form.rawWOAS || ''),
+    rawCOMM: String(form.rawCOMM || '')
+  };
+}
+
+function hasAnyBatchValue(form: BatchForm) {
+  return Object.values(form).some((value) => String(value || '').trim().length > 0);
+}
+
+function loadBatchPresets(): BatchPreset[] {
+  try {
+    const raw = localStorage.getItem(BATCH_PRESET_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        const id = String(item?.id || '');
+        const name = String(item?.name || '').trim();
+        if (!id || !name) return null;
+        return {
+          id,
+          name,
+          form: normalizeBatchForm(item?.form || emptyBatchForm()),
+          createdAt: Number(item?.createdAt || Date.now()),
+          updatedAt: Number(item?.updatedAt || Date.now())
+        } satisfies BatchPreset;
+      })
+      .filter((item): item is BatchPreset => Boolean(item))
+      .slice(0, BATCH_PRESET_LIMIT);
+  } catch {
+    return [];
+  }
 }
 
 function toSnapshot(track: Track): TrackSnapshot {
@@ -321,17 +388,11 @@ function App() {
   const [saveMessage, setSaveMessage] = useState('');
   const [saveFailures, setSaveFailures] = useState<Array<{ path: string; reason: string }>>([]);
   const [fieldHistory, setFieldHistory] = useState<FieldHistory>(() => loadFieldHistory());
-  const [batchForm, setBatchForm] = useState<BatchForm>({
-    title: '',
-    artist: '',
-    album: '',
-    year: '',
-    genre: '',
-    lyrics: '',
-    trackNo: '',
-    rawWOAS: '',
-    rawCOMM: ''
-  });
+  const [batchPresets, setBatchPresets] = useState<BatchPreset[]>(() => loadBatchPresets());
+  const [activeBatchPresetId, setActiveBatchPresetId] = useState('');
+  const [showPresetNameModal, setShowPresetNameModal] = useState(false);
+  const [pendingPresetName, setPendingPresetName] = useState('');
+  const [batchForm, setBatchForm] = useState<BatchForm>(() => emptyBatchForm());
 
   useEffect(() => {
     try {
@@ -340,6 +401,20 @@ function App() {
       // ignore storage write failures
     }
   }, [fieldHistory]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BATCH_PRESET_STORAGE_KEY, JSON.stringify(batchPresets));
+    } catch {
+      // ignore storage write failures
+    }
+  }, [batchPresets]);
+
+  useEffect(() => {
+    if (!activeBatchPresetId) return;
+    if (batchPresets.some((preset) => preset.id === activeBatchPresetId)) return;
+    setActiveBatchPresetId('');
+  }, [batchPresets, activeBatchPresetId]);
 
   function rememberHistory(entries: Array<[HistoryKey, string]>) {
     if (!entries.length) return;
@@ -383,18 +458,18 @@ function App() {
   }, [saveMessage]);
 
   useEffect(() => {
-    setBatchForm({
-      title: '',
-      artist: '',
-      album: '',
-      year: '',
-      genre: '',
-      lyrics: '',
-      trackNo: '',
-      rawWOAS: '',
-      rawCOMM: ''
-    });
+    setBatchForm(emptyBatchForm());
+    setActiveBatchPresetId('');
   }, [selectedIds.length]);
+
+  useEffect(() => {
+    if (!showPresetNameModal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowPresetNameModal(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPresetNameModal]);
 
   useEffect(() => {
     if (!tracks.length) return;
@@ -415,6 +490,8 @@ function App() {
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedTracks = tracks.filter((track) => selectedSet.has(track.id));
   const dirtyCount = tracks.filter((t) => t.dirty).length;
+  const hasBatchInput = hasAnyBatchValue(batchForm);
+  const canSave = selectedTracks.length > 1 ? hasBatchInput && !saving : dirtyCount > 0 && !saving;
   const hasImported = tracks.length > 0;
 
   useEffect(() => {
@@ -557,8 +634,7 @@ function App() {
     setSelectedIds(filteredSorted.map((t) => t.id));
   }
 
-  function applyBatch() {
-    if (!selectedIds.length) return;
+  function buildBatchUpdater() {
     const allowSource = selectedTracks.some((track) => {
       const original = originals[track.id];
       return Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
@@ -579,7 +655,7 @@ function App() {
       rawCOMM: allowNote ? batchForm.rawCOMM.trim() : ''
     };
 
-    bulkUpdate(selectedIds, (track) => {
+    const updater = (track: Track): Partial<Track> => {
       const nextTitle = normalized.title ? normalized.title : track.title;
       const nextArtist = normalized.artist ? normalized.artist : track.artist;
       const nextAlbum = normalized.album;
@@ -606,7 +682,9 @@ function App() {
         rawCOMM: nextNote,
         rawWOAS: nextSource
       };
-    });
+    };
+
+    return { normalized, updater };
   }
 
   function getEditableRules(track: Track) {
@@ -631,20 +709,19 @@ function App() {
     updateTrack(track.id, { coverPath: '', coverDataUrl: '', removeCover: true });
   }
 
-  async function onSave() {
+  async function saveTrackList(targetTracks: Track[], messagePrefix = '已保存到') {
     if (!api) {
       setSaveMessage('请在 Electron 桌面应用中运行（浏览器模式不支持写入标签）');
       return;
     }
-    const dirtyTracks = tracks.filter((track) => track.dirty);
-    if (!dirtyTracks.length || saving) return;
+    if (!targetTracks.length || saving) return;
 
     setSaving(true);
     setSaveFailures([]);
-    setProgress({ completed: 0, total: dirtyTracks.length });
+    setProgress({ completed: 0, total: targetTracks.length });
 
     try {
-      const payload = dirtyTracks.map((track) => ({
+      const payload = targetTracks.map((track) => ({
         path: track.path,
         title: track.title,
         artist: track.artist,
@@ -672,11 +749,11 @@ function App() {
       }
       setSaveFailures(result.failures || []);
       const failedSet = new Set(result.failures.map((f) => f.path));
-      const okIds = dirtyTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
+      const okIds = targetTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
 
       markSaveResult(okIds, result.failures);
       rememberHistory(
-        dirtyTracks.flatMap((track) => ([
+        targetTracks.flatMap((track) => ([
           ['title', track.title],
           ['artist', track.artist],
           ['album', track.album],
@@ -687,7 +764,7 @@ function App() {
         ] as Array<[HistoryKey, string]>))
       );
       setSaveMessage(
-        `已保存到 ${result.targetDirectory || '目标文件夹'}：成功 ${result.success} 个；失败 ${result.failed} 个`
+        `${messagePrefix} ${result.targetDirectory || '目标文件夹'}：成功 ${result.success} 个；失败 ${result.failed} 个`
       );
     } catch {
       setSaveMessage('保存异常，请重试');
@@ -696,11 +773,116 @@ function App() {
     }
   }
 
+  async function onSave() {
+    if (saving) return;
+    if (selectedTracks.length > 1) {
+      if (!selectedIds.length) return;
+      const { updater } = buildBatchUpdater();
+      bulkUpdate(selectedIds, updater);
+      const selectedSetForSave = new Set(selectedIds);
+      const updatedSelected = useStore.getState().tracks.filter((track) => selectedSetForSave.has(track.id));
+      await saveTrackList(updatedSelected, '已应用并保存到');
+      return;
+    }
+
+    const dirtyTracks = tracks.filter((track) => track.dirty);
+    if (!dirtyTracks.length) return;
+    await saveTrackList(dirtyTracks, '已保存到');
+  }
+
   function onRemoveSelected() {
     if (!selectedIds.length) return;
     const removeCount = selectedIds.length;
     removeTracks(selectedIds);
-    setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
+      setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
+  }
+
+  function buildDefaultPresetName(form: BatchForm) {
+    const pairs: Array<[string, string]> = [
+      ['标题', form.title],
+      ['艺术家', form.artist],
+      ['专辑', form.album],
+      ['流派', form.genre],
+      ['年份', form.year]
+    ];
+    const firstNonEmpty = pairs.find(([, value]) => String(value || '').trim());
+    if (firstNonEmpty) return `${firstNonEmpty[0]}-${String(firstNonEmpty[1]).trim().slice(0, 12)}`;
+    return `预设-${new Date().toLocaleDateString('zh-CN')}`;
+  }
+
+  function selectPreset(id: string) {
+    setActiveBatchPresetId(id);
+  }
+
+  function onOpenSavePresetDialog() {
+    const normalized = normalizeBatchForm(batchForm);
+    if (!hasAnyBatchValue(normalized)) {
+      setSaveMessage('请先填写至少一个批量字段，再保存预设');
+      return;
+    }
+    setPendingPresetName(buildDefaultPresetName(normalized));
+    setShowPresetNameModal(true);
+  }
+
+  function onSaveBatchPreset() {
+    const normalized = normalizeBatchForm(batchForm);
+    if (!hasAnyBatchValue(normalized)) {
+      setSaveMessage('请先填写至少一个批量字段，再保存预设');
+      setShowPresetNameModal(false);
+      return;
+    }
+
+    const name = pendingPresetName.trim() || buildDefaultPresetName(normalized);
+    if (!name) {
+      setSaveMessage('预设名称不能为空');
+      return;
+    }
+
+    const now = Date.now();
+    const normalizedName = name.slice(0, 32);
+    const existing = batchPresets.find((preset) => preset.name.toLowerCase() === normalizedName.toLowerCase());
+    if (existing) {
+      setBatchPresets((prev) =>
+        prev.map((preset) =>
+          preset.id === existing.id
+            ? { ...preset, name: normalizedName, form: normalized, updatedAt: now }
+            : preset
+        )
+      );
+      setActiveBatchPresetId(existing.id);
+      setSaveMessage(existing.id === activeBatchPresetId ? `已更新预设：${normalizedName}` : `同名预设已覆盖：${normalizedName}`);
+      setShowPresetNameModal(false);
+      return;
+    }
+
+    const created: BatchPreset = {
+      id: `${now}-${Math.random().toString(16).slice(2, 8)}`,
+      name: normalizedName,
+      form: normalized,
+      createdAt: now,
+      updatedAt: now
+    };
+    setBatchPresets((prev) => [created, ...prev].slice(0, BATCH_PRESET_LIMIT));
+    setActiveBatchPresetId(created.id);
+    setSaveMessage(`已保存预设：${normalizedName}`);
+    setShowPresetNameModal(false);
+  }
+
+  function onApplyBatchPreset() {
+    if (!activeBatchPresetId) return;
+    const preset = batchPresets.find((item) => item.id === activeBatchPresetId);
+    if (!preset) return;
+    setBatchForm(normalizeBatchForm(preset.form));
+    setSaveMessage(`已应用预设：${preset.name}`);
+  }
+
+  function onDeleteBatchPreset() {
+    if (!activeBatchPresetId) return;
+    const preset = batchPresets.find((item) => item.id === activeBatchPresetId);
+    if (!preset) return;
+    setBatchPresets((prev) => prev.filter((item) => item.id !== activeBatchPresetId));
+    setActiveBatchPresetId('');
+    setSaveMessage(`已删除预设：${preset.name}`);
   }
 
   function renderHistoryChips(field: HistoryKey, onPick: (value: string) => void) {
@@ -935,6 +1117,34 @@ function App() {
       <div className="panel-group">
         <h3>批量编辑（可编辑标签）</h3>
         <p className="batch-tip">已选中 {selectedIds.length} 个文件，当前为批量编辑模式</p>
+        <div className="preset-toolbar">
+          <label>规则模板预设</label>
+          <div className="preset-select-row">
+            <select
+              value={activeBatchPresetId}
+              onChange={(e) => selectPreset(e.target.value)}
+            >
+              <option value="">选择已保存预设</option>
+              {batchPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="preset-action-buttons">
+            <button
+              type="button"
+              className={activeBatchPresetId ? 'primary' : 'ghost'}
+              disabled={!activeBatchPresetId}
+              onClick={onApplyBatchPreset}
+            >
+              应用
+            </button>
+            <button type="button" className="ghost" onClick={onOpenSavePresetDialog}>保存</button>
+            <button type="button" className="ghost" disabled={!activeBatchPresetId} onClick={onDeleteBatchPreset}>删除</button>
+          </div>
+        </div>
 
         <label>标题</label>
         <input
@@ -1004,12 +1214,37 @@ function App() {
           </>
         )}
 
-        <button className="primary" onClick={applyBatch}>应用到选中文件</button>
         <p className="field-tip batch-apply-tip">
+          批量模式下点击右上角“保存”，将自动应用并保存当前选中文件
+          <br />
           标题、艺术家留空：不修改
           <br />
           其它字段留空：清空写入
         </p>
+      </div>
+    );
+  }
+
+  function renderPresetNameModal() {
+    if (!showPresetNameModal) return null;
+    return (
+      <div className="modal-mask" onClick={() => setShowPresetNameModal(false)}>
+        <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <h4>保存批量预设</h4>
+          <p>请输入预设名称</p>
+          <input
+            type="text"
+            autoFocus
+            value={pendingPresetName}
+            onChange={(e) => setPendingPresetName(e.target.value)}
+            maxLength={32}
+            placeholder="例如：电音专辑标准化"
+          />
+          <div className="modal-actions">
+            <button type="button" className="ghost" onClick={() => setShowPresetNameModal(false)}>取消</button>
+            <button type="button" className="primary" onClick={onSaveBatchPreset}>确认保存</button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1032,7 +1267,7 @@ function App() {
             <button className="ghost" disabled={!selectedIds.length || saving} onClick={onRemoveSelected}>
               移出列表
             </button>
-            <button className="primary" disabled={!dirtyCount || saving} onClick={onSave}>
+            <button className="primary" disabled={!canSave} onClick={onSave}>
               {saving ? '保存中...' : '保存'}
             </button>
           </div>
@@ -1123,6 +1358,7 @@ function App() {
         )}
 
         {saveMessage && <div className="toast">{saveMessage}</div>}
+        {renderPresetNameModal()}
       </div>
     );
   }

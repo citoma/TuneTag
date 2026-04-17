@@ -907,6 +907,7 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
   let completed = 0;
   let success = 0;
   const failures = [];
+  let conflictPolicy = null; // 'overwrite' | 'keep-both' | 'skip'
 
   for (const item of tracks || []) {
     const ext = path.extname(item.path || '').toLowerCase();
@@ -923,21 +924,35 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
 
     if (exists) {
       const sameAsSource = await isSameFilePath(item.path || '', directOutputPath);
-      const conflictAnswer = await dialog.showMessageBox(ownerWindow, {
-        type: 'question',
-        buttons: ['覆盖', '保留两者', '跳过'],
-        defaultId: sameAsSource ? 1 : 0,
-        cancelId: 2,
-        title: '文件名冲突',
-        message: `目标文件已存在：${baseName}`,
-        detail: sameAsSource
-          ? '该文件与原文件是同一路径。是否覆盖原文件？'
-          : '你希望如何处理这个同名文件？'
-      });
+      let decision = conflictPolicy;
 
-      if (conflictAnswer.response === 0) {
+      if (!decision) {
+        const conflictAnswer = await dialog.showMessageBox(ownerWindow, {
+          type: 'question',
+          buttons: ['覆盖', '保留', '跳过'],
+          defaultId: sameAsSource ? 1 : 0,
+          cancelId: 2,
+          title: '文件名冲突',
+          message: `目标文件已存在：${baseName}`,
+          detail: sameAsSource
+            ? '该文件与原文件是同一路径。是否覆盖原文件？'
+            : '你希望如何处理这个同名文件？',
+          checkboxLabel: '全部应用',
+          checkboxChecked: false
+        });
+
+        if (conflictAnswer.response === 0) decision = 'overwrite';
+        else if (conflictAnswer.response === 1) decision = 'keep-both';
+        else decision = 'skip';
+
+        if (conflictAnswer.checkboxChecked) {
+          conflictPolicy = decision;
+        }
+      }
+
+      if (decision === 'overwrite') {
         outputPath = directOutputPath;
-      } else if (conflictAnswer.response === 1) {
+      } else if (decision === 'keep-both') {
         outputPath = await resolveUniqueOutputPath(targetDirectory, baseName);
       } else {
         failures.push({ path: item.path, reason: '已跳过（同名未覆盖）' });

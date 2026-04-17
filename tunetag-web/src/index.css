@@ -297,6 +297,37 @@ body tr.selected .status-error { color: #fff; }
 
 .panel-group h3 { margin: 0 0 4px 0; font-size: 14px; }
 .batch-tip { margin: 0 0 8px 0; color: var(--text-muted); font-size: 12px; }
+.preset-toolbar {
+  margin-bottom: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.preset-select-row {
+  margin-top: 10px;
+}
+
+.preset-action-buttons button {
+  white-space: nowrap;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.preset-select-row select {
+  min-height: 40px;
+  width: 100%;
+  display: block;
+}
+
+.preset-action-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
 
 label {
   font-size: 11px;
@@ -570,4 +601,44 @@ textarea { resize: vertical; }
   color: var(--danger);
   font-weight: 600;
   white-space: nowrap;
+}
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.modal-card {
+  width: min(460px, calc(100% - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+}
+
+.modal-card h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-card p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }
