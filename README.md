@@ -1,10 +1,6 @@
 # 乐签 TuneTag
 
-TuneTag 是一款面向 macOS 的本地媒体标签编辑工具，聚焦一件事：
-
-**把一批音频文件拖进来，然后快速修改标签信息。**
-
-> 当前仓库主开发目录：`tunetag-web`（Electron + React + TypeScript）
+TuneTag 是一款面向 macOS 的本地媒体标签编辑工具
 
 ## 下载与运行
 
