@@ -8,6 +8,8 @@ export type Track = {
   title: string;
   artist: string;
   album: string;
+  composer: string;
+  lyricist: string;
   year: string;
   genre: string;
   lyrics: string;
@@ -16,6 +18,8 @@ export type Track = {
   source: string;
   rawTIT2: string;
   rawTPE1: string;
+  rawTCOM: string;
+  rawTEXT: string;
   rawTCON: string;
   rawUSLT: string;
   rawCOMM: string;
@@ -61,7 +65,7 @@ declare global {
         embeddedCoverDataUrl: string;
       }>;
       saveTracks: (
-        tracks: Array<Pick<Track, 'path' | 'title' | 'artist' | 'album' | 'year' | 'genre' | 'lyrics' | 'note' | 'source' | 'trackNo' | 'coverPath' | 'removeCover' | 'rawTIT2' | 'rawTPE1' | 'rawTCON' | 'rawUSLT' | 'rawCOMM' | 'rawWOAS'>>
+        tracks: Array<Pick<Track, 'path' | 'title' | 'artist' | 'album' | 'composer' | 'lyricist' | 'year' | 'genre' | 'lyrics' | 'note' | 'source' | 'trackNo' | 'coverPath' | 'removeCover' | 'rawTIT2' | 'rawTPE1' | 'rawTCOM' | 'rawTEXT' | 'rawTCON' | 'rawUSLT' | 'rawCOMM' | 'rawWOAS'>>
       ) => Promise<{
         canceled: boolean;
         targetDirectory?: string;

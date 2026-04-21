@@ -8,6 +8,8 @@ type BatchForm = {
   title: string;
   artist: string;
   album: string;
+  composer: string;
+  lyricist: string;
   year: string;
   genre: string;
   lyrics: string;
@@ -16,7 +18,7 @@ type BatchForm = {
   rawCOMM: string;
 };
 
-type HistoryKey = 'title' | 'artist' | 'album' | 'year' | 'genre' | 'trackNo' | 'rawWOAS';
+type HistoryKey = 'title' | 'artist' | 'album' | 'composer' | 'lyricist' | 'year' | 'genre' | 'trackNo' | 'rawWOAS';
 type FieldHistory = Record<HistoryKey, string[]>;
 type BatchPreset = {
   id: string;
@@ -36,6 +38,8 @@ function emptyFieldHistory(): FieldHistory {
     title: [],
     artist: [],
     album: [],
+    composer: [],
+    lyricist: [],
     year: [],
     genre: [],
     trackNo: [],
@@ -71,6 +75,8 @@ function pushHistoryEntries(history: FieldHistory, entries: Array<[HistoryKey, s
     title: [...history.title],
     artist: [...history.artist],
     album: [...history.album],
+    composer: [...history.composer],
+    lyricist: [...history.lyricist],
     year: [...history.year],
     genre: [...history.genre],
     trackNo: [...history.trackNo],
@@ -90,6 +96,8 @@ function emptyBatchForm(): BatchForm {
     title: '',
     artist: '',
     album: '',
+    composer: '',
+    lyricist: '',
     year: '',
     genre: '',
     lyrics: '',
@@ -104,6 +112,8 @@ function normalizeBatchForm(form: BatchForm): BatchForm {
     title: String(form.title || ''),
     artist: String(form.artist || ''),
     album: String(form.album || ''),
+    composer: String(form.composer || ''),
+    lyricist: String(form.lyricist || ''),
     year: String(form.year || ''),
     genre: String(form.genre || ''),
     lyrics: String(form.lyrics || ''),
@@ -152,6 +162,8 @@ function toSnapshot(track: Track): TrackSnapshot {
     title: track.title,
     artist: track.artist,
     album: track.album,
+    composer: track.composer,
+    lyricist: track.lyricist,
     year: track.year,
     genre: track.genre,
     lyrics: track.lyrics,
@@ -160,6 +172,8 @@ function toSnapshot(track: Track): TrackSnapshot {
     source: track.source,
     rawTIT2: track.rawTIT2,
     rawTPE1: track.rawTPE1,
+    rawTCOM: track.rawTCOM,
+    rawTEXT: track.rawTEXT,
     rawTCON: track.rawTCON,
     rawUSLT: track.rawUSLT,
     rawCOMM: track.rawCOMM,
@@ -236,12 +250,16 @@ const useStore = create<AppState>((set, get) => ({
           (candidate.title !== base.title ||
             candidate.artist !== base.artist ||
             candidate.album !== base.album ||
+            candidate.composer !== base.composer ||
+            candidate.lyricist !== base.lyricist ||
             candidate.year !== base.year ||
             candidate.genre !== base.genre ||
             candidate.lyrics !== base.lyrics ||
             candidate.source !== base.source ||
             candidate.rawTIT2 !== base.rawTIT2 ||
             candidate.rawTPE1 !== base.rawTPE1 ||
+            candidate.rawTCOM !== base.rawTCOM ||
+            candidate.rawTEXT !== base.rawTEXT ||
             candidate.rawTCON !== base.rawTCON ||
             candidate.rawUSLT !== base.rawUSLT ||
             candidate.rawCOMM !== base.rawCOMM ||
@@ -274,12 +292,16 @@ const useStore = create<AppState>((set, get) => ({
           (candidate.title !== base.title ||
             candidate.artist !== base.artist ||
             candidate.album !== base.album ||
+            candidate.composer !== base.composer ||
+            candidate.lyricist !== base.lyricist ||
             candidate.year !== base.year ||
             candidate.genre !== base.genre ||
             candidate.lyrics !== base.lyrics ||
             candidate.source !== base.source ||
             candidate.rawTIT2 !== base.rawTIT2 ||
             candidate.rawTPE1 !== base.rawTPE1 ||
+            candidate.rawTCOM !== base.rawTCOM ||
+            candidate.rawTEXT !== base.rawTEXT ||
             candidate.rawTCON !== base.rawTCON ||
             candidate.rawUSLT !== base.rawUSLT ||
             candidate.rawCOMM !== base.rawCOMM ||
@@ -322,12 +344,16 @@ const useStore = create<AppState>((set, get) => ({
         title: base.title,
         artist: base.artist,
         album: base.album,
+        composer: base.composer,
+        lyricist: base.lyricist,
         year: base.year,
         genre: base.genre,
         lyrics: base.lyrics,
         source: base.source,
         rawTIT2: base.rawTIT2,
         rawTPE1: base.rawTPE1,
+        rawTCOM: base.rawTCOM,
+        rawTEXT: base.rawTEXT,
         rawTCON: base.rawTCON,
         rawUSLT: base.rawUSLT,
         rawCOMM: base.rawCOMM,
@@ -675,6 +701,8 @@ function App() {
       title: batchForm.title.trim(),
       artist: batchForm.artist.trim(),
       album: batchForm.album.trim(),
+      composer: batchForm.composer.trim(),
+      lyricist: batchForm.lyricist.trim(),
       year: batchForm.year.trim(),
       genre: batchForm.genre.trim(),
       lyrics: batchForm.lyrics.trim(),
@@ -687,6 +715,8 @@ function App() {
       const nextTitle = normalized.title ? normalized.title : track.title;
       const nextArtist = normalized.artist ? normalized.artist : track.artist;
       const nextAlbum = normalized.album;
+      const nextComposer = normalized.composer;
+      const nextLyricist = normalized.lyricist;
       const nextYear = normalized.year;
       const nextGenre = normalized.genre;
       const nextLyrics = normalized.lyrics;
@@ -697,6 +727,8 @@ function App() {
         title: nextTitle,
         artist: nextArtist,
         album: nextAlbum,
+        composer: nextComposer,
+        lyricist: nextLyricist,
         year: nextYear,
         genre: nextGenre,
         lyrics: nextLyrics,
@@ -705,6 +737,8 @@ function App() {
         note: nextNote,
         rawTIT2: nextTitle,
         rawTPE1: nextArtist,
+        rawTCOM: nextComposer,
+        rawTEXT: nextLyricist,
         rawTCON: nextGenre,
         rawUSLT: nextLyrics,
         rawCOMM: nextNote,
@@ -755,6 +789,8 @@ function App() {
         title: track.title,
         artist: track.artist,
         album: track.album,
+        composer: track.composer,
+        lyricist: track.lyricist,
         year: track.year,
         genre: track.genre,
         lyrics: track.lyrics,
@@ -764,6 +800,8 @@ function App() {
         removeCover: track.removeCover,
         rawTIT2: track.rawTIT2,
         rawTPE1: track.rawTPE1,
+        rawTCOM: track.rawTCOM,
+        rawTEXT: track.rawTEXT,
         rawTCON: track.rawTCON,
         rawUSLT: track.rawUSLT,
         rawCOMM: track.rawCOMM,
@@ -787,6 +825,8 @@ function App() {
           ['title', track.title],
           ['artist', track.artist],
           ['album', track.album],
+          ['composer', track.composer],
+          ['lyricist', track.lyricist],
           ['year', track.year],
           ['genre', track.genre],
           ['trackNo', track.trackNo],
@@ -843,6 +883,8 @@ function App() {
       ['标题', form.title],
       ['艺术家', form.artist],
       ['专辑', form.album],
+      ['曲作者', form.composer],
+      ['词作者', form.lyricist],
       ['流派', form.genre],
       ['年份', form.year]
     ];
@@ -1056,6 +1098,24 @@ function App() {
           onBlur={(e) => rememberHistory([['album', e.target.value]])}
         />
         {renderHistoryChips('album', (value) => updateTrack(track.id, { album: value }))}
+        <label>曲作者</label>
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.composer}
+          onChange={(e) => updateTrack(track.id, { composer: e.target.value, rawTCOM: e.target.value })}
+          onBlur={(e) => rememberHistory([['composer', e.target.value]])}
+        />
+        {renderHistoryChips('composer', (value) => updateTrack(track.id, { composer: value, rawTCOM: value }))}
+        <label>词作者</label>
+        <input
+          disabled={!rules.commonEditable}
+          className={!rules.commonEditable ? 'input-disabled' : ''}
+          value={track.lyricist}
+          onChange={(e) => updateTrack(track.id, { lyricist: e.target.value, rawTEXT: e.target.value })}
+          onBlur={(e) => rememberHistory([['lyricist', e.target.value]])}
+        />
+        {renderHistoryChips('lyricist', (value) => updateTrack(track.id, { lyricist: value, rawTEXT: value }))}
         <label>流派</label>
         <input
           disabled={!rules.commonEditable}
@@ -1208,6 +1268,20 @@ function App() {
           onBlur={(e) => rememberHistory([['album', e.target.value]])}
         />
         {renderHistoryChips('album', (value) => setBatchForm((p) => ({ ...p, album: value })))}
+        <label>曲作者</label>
+        <input
+          value={batchForm.composer}
+          onChange={(e) => setBatchForm((p) => ({ ...p, composer: e.target.value }))}
+          onBlur={(e) => rememberHistory([['composer', e.target.value]])}
+        />
+        {renderHistoryChips('composer', (value) => setBatchForm((p) => ({ ...p, composer: value })))}
+        <label>词作者</label>
+        <input
+          value={batchForm.lyricist}
+          onChange={(e) => setBatchForm((p) => ({ ...p, lyricist: e.target.value }))}
+          onBlur={(e) => rememberHistory([['lyricist', e.target.value]])}
+        />
+        {renderHistoryChips('lyricist', (value) => setBatchForm((p) => ({ ...p, lyricist: value })))}
         <label>流派</label>
         <input
           value={batchForm.genre}

@@ -611,6 +611,8 @@ function buildRawAttributes(parsed, stat, filePath, sourceTag) {
   push('标题', common.title);
   push('艺术家', common.artist);
   push('专辑', common.album);
+  push('曲作者', Array.isArray(common.composer) ? common.composer[0] : common.composer);
+  push('词作者', Array.isArray(common.lyricist) ? common.lyricist[0] : common.lyricist);
   push('年份', common.year);
   push('曲目号', toTrackNo(common.track));
   push('流派', Array.isArray(common.genre) ? common.genre[0] : '');
@@ -715,6 +717,8 @@ async function probeWavTags(filePath) {
     title: get('title'),
     artist: get('artist'),
     album: get('album'),
+    composer: get('composer'),
+    lyricist: get('lyricist'),
     year: get('date', 'year'),
     genre: get('genre'),
     lyrics: get('lyrics', 'lyric', 'comment'),
@@ -733,6 +737,8 @@ function readWavId3Tags(filePath) {
       title: normalizeTagText(parsed?.title),
       artist: normalizeTagText(parsed?.artist),
       album: normalizeTagText(parsed?.album),
+      composer: normalizeTagText(parsed?.composer),
+      lyricist: normalizeTagText(parsed?.lyricist),
       year: normalizeTagText(parsed?.year),
       trackNo: normalizeTagText(parsed?.trackNumber),
       genre: normalizeTagText(parsed?.genre),
@@ -741,6 +747,8 @@ function readWavId3Tags(filePath) {
       lyrics: normalizeTagText(lyrics),
       rawTitle: normalizeTagText(parsed?.raw?.TIT2),
       rawArtist: normalizeTagText(parsed?.raw?.TPE1),
+      rawComposer: normalizeTagText(parsed?.raw?.TCOM),
+      rawLyricist: normalizeTagText(parsed?.raw?.TEXT),
       rawGenre: normalizeTagText(parsed?.raw?.TCON),
       rawLyrics: normalizeTagText(parsed?.raw?.USLT?.text || ''),
       rawComment: normalizeTagText(parsed?.raw?.COMM?.text || ''),
@@ -751,6 +759,8 @@ function readWavId3Tags(filePath) {
       title: '',
       artist: '',
       album: '',
+      composer: '',
+      lyricist: '',
       year: '',
       trackNo: '',
       genre: '',
@@ -759,6 +769,8 @@ function readWavId3Tags(filePath) {
       lyrics: '',
       rawTitle: '',
       rawArtist: '',
+      rawComposer: '',
+      rawLyricist: '',
       rawGenre: '',
       rawLyrics: '',
       rawComment: '',
@@ -807,11 +819,15 @@ async function readMetadata(filePath) {
     const commonTitle = readCommonText(common, 'title');
     const commonArtist = readCommonText(common, 'artist');
     const commonAlbum = readCommonText(common, 'album');
+    const commonComposer = readCommonText(common, 'composer');
+    const commonLyricist = readCommonText(common, 'lyricist');
     const commonGenre = readCommonText(common, 'genre');
     const commonLyrics = readCommonText(common, 'lyrics');
     const wavNativeTitle = readNativeFirst(parsed, ['TIT2']);
     const wavNativeArtist = readNativeFirst(parsed, ['TPE1']);
     const wavNativeAlbum = readNativeFirst(parsed, ['TALB']);
+    const wavNativeComposer = readNativeFirst(parsed, ['TCOM']);
+    const wavNativeLyricist = readNativeFirst(parsed, ['TEXT']);
     const wavNativeGenre = readNativeFirst(parsed, ['TCON']);
     const wavNativeLyrics = readNativeFirst(parsed, ['USLT']);
     const wavNativeTrackNo = readNativeFirst(parsed, ['TRCK']);
@@ -843,6 +859,12 @@ async function readMetadata(filePath) {
         ''
       )
       : (commonAlbum || '');
+    const resolvedComposer = ext === '.wav'
+      ? (wavId3?.composer || wavTags?.composer || wavNativeComposer || commonComposer || '')
+      : (commonComposer || '');
+    const resolvedLyricist = ext === '.wav'
+      ? (wavId3?.lyricist || wavTags?.lyricist || wavNativeLyricist || commonLyricist || '')
+      : (commonLyricist || '');
     const resolvedYear =
       ext === '.wav'
         ? (wavId3?.year || wavTags?.year || (common.year ? String(common.year) : '') || '')
@@ -862,6 +884,8 @@ async function readMetadata(filePath) {
       : (sourceTag || whereFromSource);
     const rawTIT2 = ext === '.wav' ? (wavId3?.rawTitle || resolvedTitle) : (readNativeFirst(parsed, ['TIT2']) || resolvedTitle);
     const rawTPE1 = ext === '.wav' ? (wavId3?.rawArtist || resolvedArtist) : (readNativeFirst(parsed, ['TPE1']) || resolvedArtist);
+    const rawTCOM = ext === '.wav' ? (wavId3?.rawComposer || resolvedComposer) : (readNativeFirst(parsed, ['TCOM']) || resolvedComposer);
+    const rawTEXT = ext === '.wav' ? (wavId3?.rawLyricist || resolvedLyricist) : (readNativeFirst(parsed, ['TEXT']) || resolvedLyricist);
     const rawTCON = ext === '.wav' ? (wavId3?.rawGenre || resolvedGenre) : (readNativeFirst(parsed, ['TCON']) || resolvedGenre);
     const rawUSLT = ext === '.wav' ? (wavId3?.rawLyrics || resolvedLyrics) : (readNativeFirst(parsed, ['USLT']) || resolvedLyrics);
     const rawCOMM = ext === '.wav'
@@ -879,6 +903,8 @@ async function readMetadata(filePath) {
       title: resolvedTitle,
       artist: resolvedArtist,
       album: resolvedAlbum,
+      composer: resolvedComposer,
+      lyricist: resolvedLyricist,
       year: resolvedYear,
       genre: resolvedGenre,
       lyrics: resolvedLyrics,
@@ -887,6 +913,8 @@ async function readMetadata(filePath) {
       source: resolvedSource,
       rawTIT2,
       rawTPE1,
+      rawTCOM,
+      rawTEXT,
       rawTCON,
       rawUSLT,
       rawCOMM,
@@ -918,6 +946,8 @@ async function readMetadata(filePath) {
       title: '',
       artist: '',
       album: '',
+      composer: '',
+      lyricist: '',
       year: '',
       genre: '',
       lyrics: '',
@@ -926,6 +956,8 @@ async function readMetadata(filePath) {
       source: '',
       rawTIT2: '',
       rawTPE1: '',
+      rawTCOM: '',
+      rawTEXT: '',
       rawTCON: '',
       rawUSLT: '',
       rawCOMM: '',
@@ -1002,6 +1034,8 @@ function buildMetadataEntries(item, ext) {
 
   const title = normalizeValue(item.title || item.rawTIT2);
   const artist = normalizeValue(item.artist || item.rawTPE1);
+  const composer = normalizeValue(item.composer || item.rawTCOM);
+  const lyricist = normalizeValue(item.lyricist || item.rawTEXT);
   const genre = normalizeValue(item.genre || item.rawTCON);
   const lyrics = normalizeValue(item.lyrics || item.rawUSLT);
   const note = normalizeValue(item.note || item.rawCOMM);
@@ -1024,6 +1058,8 @@ function buildMetadataEntries(item, ext) {
     ['title', title],
     ['artist', artist],
     ['album', normalizeValue(item.album)],
+    ['composer', composer],
+    ['lyricist', lyricist],
     ['date', normalizeValue(item.year)],
     ['genre', genre],
     ['lyrics', lyrics],
@@ -1043,6 +1079,8 @@ async function writeWavId3Overlay(item, targetPath) {
     title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
     artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
     album: normalizeTagText(item.album) || undefined,
+    composer: normalizeTagText(item.rawTCOM || item.composer) || undefined,
+    lyricist: normalizeTagText(item.rawTEXT || item.lyricist) || undefined,
     year: normalizeTagText(item.year) || undefined,
     genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
     trackNumber: normalizeTagText(item.trackNo) || undefined,
@@ -1150,6 +1188,8 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
     title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
     artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
     album: normalizeTagText(item.album) || undefined,
+    composer: normalizeTagText(item.rawTCOM || item.composer) || undefined,
+    lyricist: normalizeTagText(item.rawTEXT || item.lyricist) || undefined,
     year: normalizeTagText(item.year) || undefined,
     genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
     trackNumber: normalizeTagText(item.trackNo) || undefined,
