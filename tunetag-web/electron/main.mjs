@@ -183,8 +183,8 @@ function createWindow() {
   const devUrl = 'http://localhost:5173';
   const isDev = !app.isPackaged;
   const mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 860,
+    width: 1100,
+    height: 700,
     minWidth: 1100,
     minHeight: 700,
     title: 'TuneTag',
@@ -1031,6 +1031,10 @@ async function probeMedia(filePath) {
 
 function buildMetadataEntries(item, ext) {
   const normalizeValue = (value) => normalizeTagText(value);
+  const asciiSafe = (value) => {
+    const text = normalizeValue(value);
+    return /^[\x00-\x7F]*$/u.test(text) ? text : '';
+  };
 
   const title = normalizeValue(item.title || item.rawTIT2);
   const artist = normalizeValue(item.artist || item.rawTPE1);
@@ -1054,7 +1058,28 @@ function buildMetadataEntries(item, ext) {
     })
     : note;
 
-  const entries = [
+  if (ext === '.wav') {
+    // RIFF INFO text encoding interoperability is poor for CJK.
+    // Keep WAV tags conservative and ASCII-safe to avoid mojibake and playback regressions.
+    const entries = [
+      ['title', asciiSafe(title)],
+      ['artist', asciiSafe(artist)],
+      ['album', asciiSafe(normalizeValue(item.album))],
+      ['composer', asciiSafe(composer)],
+      ['lyricist', asciiSafe(lyricist)],
+      ['date', asciiSafe(normalizeValue(item.year))],
+      ['genre', asciiSafe(genre)],
+      ['comment', asciiSafe(wavComment)],
+      ['track', asciiSafe(normalizeValue(item.trackNo))]
+    ].filter((entry) => entry[1]);
+    const safeSource = asciiSafe(source);
+    if (safeSource) {
+      entries.push(['IARL', safeSource]);
+    }
+    return entries;
+  }
+
+  return [
     ['title', title],
     ['artist', artist],
     ['album', normalizeValue(item.album)],
@@ -1063,41 +1088,10 @@ function buildMetadataEntries(item, ext) {
     ['date', normalizeValue(item.year)],
     ['genre', genre],
     ['lyrics', lyrics],
-    ['comment', wavComment],
+    ['comment', note],
     ['source', source],
     ['track', normalizeValue(item.trackNo)]
   ];
-  if (ext === '.wav' && source) {
-    entries.push(['IARL', source]);
-  }
-
-  return entries;
-}
-
-async function writeWavId3Overlay(item, targetPath) {
-  const tags = {
-    title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
-    artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
-    album: normalizeTagText(item.album) || undefined,
-    composer: normalizeTagText(item.rawTCOM || item.composer) || undefined,
-    lyricist: normalizeTagText(item.rawTEXT || item.lyricist) || undefined,
-    year: normalizeTagText(item.year) || undefined,
-    genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
-    trackNumber: normalizeTagText(item.trackNo) || undefined,
-    audioSourceUrl: normalizeTagText(item.rawWOAS || item.source) || undefined,
-    unsynchronisedLyrics: {
-      language: 'eng',
-      text: normalizeTagText(item.rawUSLT || item.lyrics)
-    },
-    comment: {
-      language: 'eng',
-      text: normalizeTagText(item.rawCOMM || item.note)
-    }
-  };
-  const ok = NodeID3.update(tags, targetPath);
-  if (!ok) {
-    throw new Error('WAV ID3 标签写入失败');
-  }
 }
 
 async function writeMetadataWithFfmpegToTarget(item, targetPath) {
@@ -1106,15 +1100,18 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   const ext = path.extname(targetPath).toLowerCase();
   const coverPath = typeof item.coverPath === 'string' ? item.coverPath.trim() : '';
   const withCover = Boolean(coverPath) && ext === '.mp3';
+  const isWav = ext === '.wav';
   const buildArgs = (tempPath, forcePcmForWav = false) => {
     const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', item.path];
 
-    if (withCover) {
+    if (isWav) {
+      args.push('-map', '0:a:0');
+    } else if (withCover) {
       args.push('-i', coverPath, '-map', '0:a', '-map', '1:v');
     } else {
       args.push('-map', '0');
     }
-    args.push('-map_metadata', '0');
+    args.push('-map_metadata', isWav ? '-1' : '0');
 
     for (const [key, value] of buildMetadataEntries(item, ext)) {
       args.push('-metadata', `${key}=${value}`);
@@ -1122,6 +1119,11 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
 
     if (withCover) {
       args.push('-c:a', 'copy', '-c:v', 'mjpeg', '-disposition:v:0', 'attached_pic');
+    } else if (isWav && forcePcmForWav) {
+      args.push('-c:a', 'pcm_s16le');
+    } else if (isWav) {
+      // Keep original WAV codec first for max downstream compatibility (e.g., smart speakers).
+      args.push('-c', 'copy');
     } else if (forcePcmForWav && ext === '.wav') {
       args.push('-map', '0:a:0', '-c:a', 'pcm_s16le');
     } else {
@@ -1139,9 +1141,6 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   try {
     await runProcess(ffmpegExecutablePath, buildArgs(tempPath, false));
     await replaceFileFromTemp(tempPath, targetPath);
-    if (ext === '.wav') {
-      await writeWavId3Overlay(item, targetPath);
-    }
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
     if (ext === '.wav') {
@@ -1149,7 +1148,6 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
       try {
         await runProcess(ffmpegExecutablePath, buildArgs(retryTempPath, true));
         await replaceFileFromTemp(retryTempPath, targetPath);
-        await writeWavId3Overlay(item, targetPath);
         return;
       } catch (retryError) {
         await fs.rm(retryTempPath, { force: true }).catch(() => {});
@@ -1185,22 +1183,22 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
   }
 
   const tags = {
-    title: normalizeTagText(item.rawTIT2 || item.title) || undefined,
-    artist: normalizeTagText(item.rawTPE1 || item.artist) || undefined,
+    title: normalizeTagText(item.title || item.rawTIT2) || undefined,
+    artist: normalizeTagText(item.artist || item.rawTPE1) || undefined,
     album: normalizeTagText(item.album) || undefined,
-    composer: normalizeTagText(item.rawTCOM || item.composer) || undefined,
-    lyricist: normalizeTagText(item.rawTEXT || item.lyricist) || undefined,
+    composer: normalizeTagText(item.composer || item.rawTCOM) || undefined,
+    lyricist: normalizeTagText(item.lyricist || item.rawTEXT) || undefined,
     year: normalizeTagText(item.year) || undefined,
-    genre: normalizeTagText(item.rawTCON || item.genre) || undefined,
+    genre: normalizeTagText(item.genre || item.rawTCON) || undefined,
     trackNumber: normalizeTagText(item.trackNo) || undefined,
-    audioSourceUrl: normalizeTagText(item.rawWOAS || item.source) || undefined,
+    audioSourceUrl: normalizeTagText(item.source || item.rawWOAS) || undefined,
     unsynchronisedLyrics: {
       language: 'eng',
-      text: normalizeTagText(item.rawUSLT || item.lyrics)
+      text: normalizeTagText(item.lyrics || item.rawUSLT)
     },
     comment: {
       language: 'eng',
-      text: normalizeTagText(item.rawCOMM || item.note)
+      text: normalizeTagText(item.note || item.rawCOMM)
     }
   };
 
