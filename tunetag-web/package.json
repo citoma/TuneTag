@@ -13,12 +13,16 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "electron .",
-    "pack:mac": "electron-packager . TuneTag --platform=darwin --arch=arm64 --overwrite --icon=electron/assets/app-icon.icns --out=release --app-bundle-id=com.citoma.tunetag --extend-info=electron/extend-info.plist",
-    "pack:mac:slim": "electron-packager . TuneTag --platform=darwin --arch=arm64 --overwrite --icon=electron/assets/app-icon.icns --out=release-slim --app-bundle-id=com.citoma.tunetag --extend-info=electron/extend-info.plist --ignore=\"^/release($|/)\" --ignore=\"^/release[^/]+($|/)\" --ignore=\"^/node_modules/ffprobe-static/bin/(?!darwin/arm64/ffprobe$)\" --ignore=\"^/node_modules/ffprobe-static/tests\" --ignore=\"^/node_modules/.*/test\" --ignore=\"^/node_modules/.*/tests\" --ignore=\"^/node_modules/.*/docs\"",
-    "dmg:mac": "rm -rf release/dmg-staging && mkdir -p release/dmg-staging && cp -R release/TuneTag-darwin-arm64/TuneTag.app release/dmg-staging/ && ln -s /Applications release/dmg-staging/Applications && rm -f release/TuneTag.dmg && hdiutil create -volname \"TuneTag\" -srcfolder release/dmg-staging -ov -format UDZO release/TuneTag.dmg",
-    "dmg:mac:slim": "rm -rf release-slim/dmg-staging && mkdir -p release-slim/dmg-staging && cp -R release-slim/TuneTag-darwin-arm64/TuneTag.app release-slim/dmg-staging/ && ln -s /Applications release-slim/dmg-staging/Applications && rm -f release-slim/TuneTag-slim.dmg && hdiutil create -volname \"TuneTag\" -srcfolder release-slim/dmg-staging -ov -format UDZO release-slim/TuneTag-slim.dmg",
-    "dist:mac": "npm run build && npm run pack:mac && npm run dmg:mac",
-    "dist:mac:slim": "npm run build && npm run pack:mac:slim && npm run dmg:mac:slim"
+    "pack:mac": "node scripts/package-mac.mjs --arch arm64",
+    "pack:mac:x64": "node scripts/package-mac.mjs --arch x64",
+    "pack:mac:slim": "node scripts/package-mac.mjs --arch arm64 --slim",
+    "pack:mac:slim:x64": "node scripts/package-mac.mjs --arch x64 --slim",
+    "dist:mac": "npm run build && npm run pack:mac",
+    "dist:mac:x64": "npm run build && npm run pack:mac:x64",
+    "dist:mac:slim": "npm run build && npm run pack:mac:slim",
+    "dist:mac:slim:x64": "npm run build && npm run pack:mac:slim:x64",
+    "dist:mac:all": "npm run build && npm run pack:mac && npm run pack:mac:x64",
+    "dist:mac:slim:all": "npm run build && npm run pack:mac:slim && npm run pack:mac:slim:x64"
   },
   "dependencies": {
     "electron": "^37.4.0",

@@ -43,6 +43,21 @@ npm run dist:mac
 npm run dist:mac:slim
 ```
 
+如果需要同时产出 Apple Silicon 和 Intel 版本：
+
+```bash
+npm run dist:mac:all
+# 或瘦身双版本
+npm run dist:mac:slim:all
+```
+
+对应单独版本也可以直接打：
+
+```bash
+npm run dist:mac:x64
+npm run dist:mac:slim:x64
+```
+
 ## 技术栈
 
 - Electron
