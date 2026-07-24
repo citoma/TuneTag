@@ -1,421 +1,45 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { create } from 'zustand';
+import type { DragEvent } from 'react';
 import type { Track } from './types/tunetag';
+import {
+  useStore,
+  loadFieldHistory,
+  loadBatchPresets,
+  emptyBatchForm,
+  normalizeBatchForm,
+  hasAnyBatchValue,
+  pushHistoryEntries,
+  HISTORY_STORAGE_KEY,
+  BATCH_PRESET_STORAGE_KEY,
+  BATCH_PRESET_LIMIT,
+  type SortKey,
+  type BatchForm,
+  type BatchPreset,
+  type FieldHistory,
+  type HistoryKey
+} from './store';
+import { statusLabel, getEditableRules, buildHistoryEntries } from './fieldConfig';
+import EmptyState from './components/EmptyState';
+import FileTable from './components/FileTable';
+import SingleEditor from './components/SingleEditor';
+import BatchEditor from './components/BatchEditor';
+import PresetNameModal from './components/PresetNameModal';
 
-type SortKey = 'fileName' | 'artist' | 'album' | 'year' | 'status';
-type TrackSnapshot = Omit<Track, 'dirty' | 'status' | 'errorMessage'>;
-type BatchForm = {
-  title: string;
-  artist: string;
-  album: string;
-  composer: string;
-  lyricist: string;
-  year: string;
-  genre: string;
-  lyrics: string;
-  trackNo: string;
-  rawWOAS: string;
-  rawCOMM: string;
-};
-
-type HistoryKey = 'title' | 'artist' | 'album' | 'composer' | 'lyricist' | 'year' | 'genre' | 'trackNo' | 'rawWOAS';
-type FieldHistory = Record<HistoryKey, string[]>;
-type BatchPreset = {
-  id: string;
-  name: string;
-  form: BatchForm;
-  createdAt: number;
-  updatedAt: number;
-};
-
-const HISTORY_STORAGE_KEY = 'tunetag.fieldHistory.v1';
-const BATCH_PRESET_STORAGE_KEY = 'tunetag.batchPresets.v1';
-const HISTORY_LIMIT = 8;
-const BATCH_PRESET_LIMIT = 50;
-
-function emptyFieldHistory(): FieldHistory {
-  return {
-    title: [],
-    artist: [],
-    album: [],
-    composer: [],
-    lyricist: [],
-    year: [],
-    genre: [],
-    trackNo: [],
-    rawWOAS: []
-  };
-}
-
-function normalizeHistoryValue(value: string) {
-  return String(value || '').trim().replace(/\s+/g, ' ');
-}
-
-function loadFieldHistory(): FieldHistory {
-  try {
-    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (!raw) return emptyFieldHistory();
-    const parsed = JSON.parse(raw);
-    const base = emptyFieldHistory();
-    for (const key of Object.keys(base) as HistoryKey[]) {
-      const list = Array.isArray(parsed?.[key]) ? parsed[key] : [];
-      base[key] = list
-        .map((item: string) => normalizeHistoryValue(item))
-        .filter(Boolean)
-        .slice(0, HISTORY_LIMIT);
-    }
-    return base;
-  } catch {
-    return emptyFieldHistory();
-  }
-}
-
-function pushHistoryEntries(history: FieldHistory, entries: Array<[HistoryKey, string]>) {
-  const next: FieldHistory = {
-    title: [...history.title],
-    artist: [...history.artist],
-    album: [...history.album],
-    composer: [...history.composer],
-    lyricist: [...history.lyricist],
-    year: [...history.year],
-    genre: [...history.genre],
-    trackNo: [...history.trackNo],
-    rawWOAS: [...history.rawWOAS]
-  };
-
-  for (const [key, rawValue] of entries) {
-    const value = normalizeHistoryValue(rawValue);
-    if (!value) continue;
-    next[key] = [value, ...next[key].filter((item) => item !== value)].slice(0, HISTORY_LIMIT);
-  }
-  return next;
-}
-
-function emptyBatchForm(): BatchForm {
-  return {
-    title: '',
-    artist: '',
-    album: '',
-    composer: '',
-    lyricist: '',
-    year: '',
-    genre: '',
-    lyrics: '',
-    trackNo: '',
-    rawWOAS: '',
-    rawCOMM: ''
-  };
-}
-
-function normalizeBatchForm(form: BatchForm): BatchForm {
-  return {
-    title: String(form.title || ''),
-    artist: String(form.artist || ''),
-    album: String(form.album || ''),
-    composer: String(form.composer || ''),
-    lyricist: String(form.lyricist || ''),
-    year: String(form.year || ''),
-    genre: String(form.genre || ''),
-    lyrics: String(form.lyrics || ''),
-    trackNo: String(form.trackNo || ''),
-    rawWOAS: String(form.rawWOAS || ''),
-    rawCOMM: String(form.rawCOMM || '')
-  };
-}
-
-function hasAnyBatchValue(form: BatchForm) {
-  return Object.values(form).some((value) => String(value || '').trim().length > 0);
-}
-
-function loadBatchPresets(): BatchPreset[] {
-  try {
-    const raw = localStorage.getItem(BATCH_PRESET_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => {
-        const id = String(item?.id || '');
-        const name = String(item?.name || '').trim();
-        if (!id || !name) return null;
-        return {
-          id,
-          name,
-          form: normalizeBatchForm(item?.form || emptyBatchForm()),
-          createdAt: Number(item?.createdAt || Date.now()),
-          updatedAt: Number(item?.updatedAt || Date.now())
-        } satisfies BatchPreset;
-      })
-      .filter((item): item is BatchPreset => Boolean(item))
-      .slice(0, BATCH_PRESET_LIMIT);
-  } catch {
-    return [];
-  }
-}
-
-function toSnapshot(track: Track): TrackSnapshot {
-  return {
-    id: track.id,
-    path: track.path,
-    fileName: track.fileName,
-    format: track.format,
-    title: track.title,
-    artist: track.artist,
-    album: track.album,
-    composer: track.composer,
-    lyricist: track.lyricist,
-    year: track.year,
-    genre: track.genre,
-    lyrics: track.lyrics,
-    note: track.note,
-    trackNo: track.trackNo,
-    source: track.source,
-    rawTIT2: track.rawTIT2,
-    rawTPE1: track.rawTPE1,
-    rawTCOM: track.rawTCOM,
-    rawTEXT: track.rawTEXT,
-    rawTCON: track.rawTCON,
-    rawUSLT: track.rawUSLT,
-    rawCOMM: track.rawCOMM,
-    rawWOAS: track.rawWOAS,
-    hasEmbeddedCover: track.hasEmbeddedCover,
-    embeddedCoverDataUrl: track.embeddedCoverDataUrl,
-    embeddedCoverPath: track.embeddedCoverPath,
-    coverDataUrl: track.coverDataUrl,
-    coverPath: track.coverPath,
-    exportedPath: track.exportedPath,
-    removeCover: track.removeCover,
-    rawAttributes: track.rawAttributes,
-    codec: track.codec,
-    sampleRate: track.sampleRate,
-    bitDepth: track.bitDepth,
-    durationSec: track.durationSec,
-    fileSizeBytes: track.fileSizeBytes,
-    modifiedAt: track.modifiedAt
-  };
-}
-
-type AppState = {
-  tracks: Track[];
-  originals: Record<string, TrackSnapshot>;
-  selectedIds: string[];
-  setTracks: (tracks: Track[]) => void;
-  appendTracks: (tracks: Track[]) => { added: number; duplicates: number };
-  setSelectedIds: (ids: string[]) => void;
-  updateTrack: (id: string, patch: Partial<Track>) => void;
-  bulkUpdate: (ids: string[], updater: (track: Track) => Partial<Track>) => void;
-  removeTracks: (ids: string[]) => void;
-  resetDirty: () => void;
-  markSaveResult: (okIds: string[], failures: Array<{ path: string; reason: string }>, exported: Array<{ sourcePath: string; outputPath: string }>) => void;
-};
-
-const useStore = create<AppState>((set, get) => ({
-  tracks: [],
-  originals: {},
-  selectedIds: [],
-  setTracks: (tracks) => {
-    const originals = Object.fromEntries(
-      tracks.map((track) => [track.id, toSnapshot(track)])
-    );
-    set({ tracks, originals, selectedIds: tracks.length ? [tracks[0].id] : [] });
-  },
-  appendTracks: (incoming) => {
-    const { tracks, originals, selectedIds } = get();
-    const existing = new Set(tracks.map((t) => t.id));
-    const newTracks = incoming.filter((t) => !existing.has(t.id));
-
-    if (!newTracks.length) {
-      return { added: 0, duplicates: incoming.length };
-    }
-
-    const nextTracks = [...tracks, ...newTracks];
-    const nextOriginals = { ...originals };
-    for (const track of newTracks) {
-      nextOriginals[track.id] = toSnapshot(track);
-    }
-
-    const nextSelected = selectedIds.length ? selectedIds : [nextTracks[0].id];
-    set({ tracks: nextTracks, originals: nextOriginals, selectedIds: nextSelected });
-    return { added: newTracks.length, duplicates: incoming.length - newTracks.length };
-  },
-  setSelectedIds: (ids) => set({ selectedIds: ids }),
-  updateTrack: (id, patch) => {
-    const { tracks, originals } = get();
-    const next = tracks.map((track) => {
-      if (track.id !== id) return track;
-      const candidate = { ...track, ...patch };
-      const base = originals[id];
-      const dirty = Boolean(
-        base &&
-          (candidate.title !== base.title ||
-            candidate.artist !== base.artist ||
-            candidate.album !== base.album ||
-            candidate.composer !== base.composer ||
-            candidate.lyricist !== base.lyricist ||
-            candidate.year !== base.year ||
-            candidate.genre !== base.genre ||
-            candidate.lyrics !== base.lyrics ||
-            candidate.source !== base.source ||
-            candidate.rawTIT2 !== base.rawTIT2 ||
-            candidate.rawTPE1 !== base.rawTPE1 ||
-            candidate.rawTCOM !== base.rawTCOM ||
-            candidate.rawTEXT !== base.rawTEXT ||
-            candidate.rawTCON !== base.rawTCON ||
-            candidate.rawUSLT !== base.rawUSLT ||
-            candidate.rawCOMM !== base.rawCOMM ||
-            candidate.rawWOAS !== base.rawWOAS ||
-            candidate.note !== base.note ||
-            candidate.trackNo !== base.trackNo ||
-            candidate.coverDataUrl !== base.coverDataUrl ||
-            candidate.coverPath !== base.coverPath ||
-            candidate.removeCover !== base.removeCover)
-      );
-      return {
-        ...candidate,
-        dirty,
-        exportedPath: dirty ? '' : track.exportedPath,
-        status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
-        errorMessage: ''
-      };
-    });
-    set({ tracks: next });
-  },
-  bulkUpdate: (ids, updater) => {
-    const setIds = new Set(ids);
-    const { tracks, originals } = get();
-    const next = tracks.map((track) => {
-      if (!setIds.has(track.id)) return track;
-      const candidate = { ...track, ...updater(track) };
-      const base = originals[track.id];
-      const dirty = Boolean(
-        base &&
-          (candidate.title !== base.title ||
-            candidate.artist !== base.artist ||
-            candidate.album !== base.album ||
-            candidate.composer !== base.composer ||
-            candidate.lyricist !== base.lyricist ||
-            candidate.year !== base.year ||
-            candidate.genre !== base.genre ||
-            candidate.lyrics !== base.lyrics ||
-            candidate.source !== base.source ||
-            candidate.rawTIT2 !== base.rawTIT2 ||
-            candidate.rawTPE1 !== base.rawTPE1 ||
-            candidate.rawTCOM !== base.rawTCOM ||
-            candidate.rawTEXT !== base.rawTEXT ||
-            candidate.rawTCON !== base.rawTCON ||
-            candidate.rawUSLT !== base.rawUSLT ||
-            candidate.rawCOMM !== base.rawCOMM ||
-            candidate.rawWOAS !== base.rawWOAS ||
-            candidate.note !== base.note ||
-            candidate.trackNo !== base.trackNo ||
-            candidate.coverDataUrl !== base.coverDataUrl ||
-            candidate.coverPath !== base.coverPath ||
-            candidate.removeCover !== base.removeCover)
-      );
-      return {
-        ...candidate,
-        dirty,
-        exportedPath: dirty ? '' : track.exportedPath,
-        status: dirty ? ('dirty' as const) : (track.status === 'exported' ? ('exported' as const) : ('clean' as const)),
-        errorMessage: ''
-      };
-    });
-    set({ tracks: next });
-  },
-  removeTracks: (ids) => {
-    const removeSet = new Set(ids);
-    const { tracks, originals, selectedIds } = get();
-
-    const nextTracks = tracks.filter((track) => !removeSet.has(track.id));
-    const nextOriginals = Object.fromEntries(
-      Object.entries(originals).filter(([id]) => !removeSet.has(id))
-    );
-    const nextSelected = selectedIds.filter((id) => !removeSet.has(id));
-
-    set({ tracks: nextTracks, originals: nextOriginals, selectedIds: nextSelected });
-  },
-  resetDirty: () => {
-    const { tracks, originals } = get();
-    const reset = tracks.map((track) => {
-      const base = originals[track.id];
-      if (!base) return track;
-      return {
-        ...track,
-        title: base.title,
-        artist: base.artist,
-        album: base.album,
-        composer: base.composer,
-        lyricist: base.lyricist,
-        year: base.year,
-        genre: base.genre,
-        lyrics: base.lyrics,
-        source: base.source,
-        rawTIT2: base.rawTIT2,
-        rawTPE1: base.rawTPE1,
-        rawTCOM: base.rawTCOM,
-        rawTEXT: base.rawTEXT,
-        rawTCON: base.rawTCON,
-        rawUSLT: base.rawUSLT,
-        rawCOMM: base.rawCOMM,
-        rawWOAS: base.rawWOAS,
-        note: base.note,
-        trackNo: base.trackNo,
-        coverDataUrl: base.coverDataUrl,
-        coverPath: base.coverPath,
-        exportedPath: '',
-        removeCover: base.removeCover,
-        dirty: false,
-        status: 'clean' as const,
-        errorMessage: ''
-      };
-    });
-    set({ tracks: reset });
-  },
-  markSaveResult: (okIds, failures, exported) => {
-    const okSet = new Set(okIds);
-    const failMap = new Map(failures.map((item) => [item.path, item.reason]));
-    const exportedMap = new Map(exported.map((item) => [item.sourcePath, item.outputPath]));
-
-    const { tracks, originals } = get();
-    const nextTracks = tracks.map((track) => {
-      if (okSet.has(track.id)) {
-        return {
-          ...track,
-          dirty: false,
-          status: 'exported' as const,
-          errorMessage: '',
-          exportedPath: exportedMap.get(track.path) || track.exportedPath || ''
-        };
-      }
-      const reason = failMap.get(track.path);
-      if (reason) {
-        return { ...track, status: 'error' as const, errorMessage: reason, exportedPath: '' };
-      }
-      return track;
-    });
-
-    const nextOriginals = { ...originals };
-    for (const track of nextTracks) {
-      if (!track.dirty && !track.errorMessage) {
-        nextOriginals[track.id] = toSnapshot(track);
-      }
-    }
-
-    set({ tracks: nextTracks, originals: nextOriginals });
-  }
-}));
-
-function statusLabel(track: Track) {
-  if (track.status === 'error') return '保存失败';
-  if (track.status === 'dirty') return '已修改';
-  if (track.status === 'exported') return '已导出';
-  return '未修改';
-}
-
-function App() {
+export default function App() {
   const api = window.tunetag;
   const isMac = navigator.userAgent.toLowerCase().includes('mac');
-  const { tracks, originals, selectedIds, appendTracks, setSelectedIds, updateTrack, bulkUpdate, removeTracks, resetDirty, markSaveResult } = useStore();
+  const {
+    tracks,
+    originals,
+    selectedIds,
+    appendTracks,
+    setSelectedIds,
+    updateTrack,
+    bulkUpdate,
+    removeTracks,
+    resetDirty,
+    markSaveResult
+  } = useStore();
 
   const [sortKey, setSortKey] = useState<SortKey>('fileName');
   const [sortAsc, setSortAsc] = useState(true);
@@ -466,11 +90,6 @@ function App() {
     }));
   }
 
-  function historyLabel(value: string) {
-    if (value.length <= 16) return value;
-    return `${value.slice(0, 16)}…`;
-  }
-
   useEffect(() => {
     if (!api) return;
     const unsubscribe = api.onSaveProgress((payload) => setProgress(payload));
@@ -483,7 +102,7 @@ function App() {
   }, [api, tracks.length]);
 
   useEffect(() => {
-    const preventDefault = (event: DragEvent) => {
+    const preventDefault = (event: globalThis.DragEvent) => {
       event.preventDefault();
     };
     window.addEventListener('dragover', preventDefault);
@@ -558,19 +177,22 @@ function App() {
     };
   }, [api, selectedTracks, updateTrack]);
 
-  const importPaths = useCallback(async (paths: string[]) => {
-    if (!api) {
-      setSaveMessage('请在 Electron 桌面应用中运行（浏览器模式不支持本地文件能力）');
-      return;
-    }
-    if (!paths.length) return;
-    const { tracks: incoming, skipped } = await api.importPaths(paths);
-    const { added, duplicates } = appendTracks(incoming);
-    const parts = [`已新增 ${added} 个文件`];
-    if (duplicates > 0) parts.push(`重复 ${duplicates} 个`);
-    if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 个（不支持或不可访问）`);
-    setSaveMessage(parts.join('，'));
-  }, [api, appendTracks]);
+  const importPaths = useCallback(
+    async (paths: string[]) => {
+      if (!api) {
+        setSaveMessage('请在 Electron 桌面应用中运行（浏览器模式不支持本地文件能力）');
+        return;
+      }
+      if (!paths.length) return;
+      const { tracks: incoming, skipped } = await api.importPaths(paths);
+      const { added, duplicates } = appendTracks(incoming);
+      const parts = [`已新增 ${added} 个文件`];
+      if (duplicates > 0) parts.push(`重复 ${duplicates} 个`);
+      if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 个（不支持或不可访问）`);
+      setSaveMessage(parts.join('，'));
+    },
+    [api, appendTracks]
+  );
 
   useEffect(() => {
     if (!api?.onExternalOpenPaths) return;
@@ -602,7 +224,7 @@ function App() {
     await importPaths(paths);
   }
 
-  async function onDropFiles(event: React.DragEvent<HTMLDivElement>) {
+  async function onDropFiles(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
     const addPath = (set: Set<string>, raw: string) => {
@@ -749,15 +371,6 @@ function App() {
     return { normalized, updater };
   }
 
-  function getEditableRules(track: Track) {
-    const ext = track.path.toLowerCase().split('.').pop() || '';
-    const commonEditable = ext === 'mp3' || ext === 'flac' || ext === 'm4a' || ext === 'wav';
-    return {
-      commonEditable,
-      coverEditable: ext === 'mp3'
-    };
-  }
-
   async function onPickCover(trackId: string) {
     if (!api) return;
     const coverPath = await api.pickCoverImage();
@@ -820,19 +433,9 @@ function App() {
       const okIds = targetTracks.map((t) => t.id).filter((id) => !failedSet.has(id));
 
       markSaveResult(okIds, result.failures, result.exported || []);
-      rememberHistory(
-        targetTracks.flatMap((track) => ([
-          ['title', track.title],
-          ['artist', track.artist],
-          ['album', track.album],
-          ['composer', track.composer],
-          ['lyricist', track.lyricist],
-          ['year', track.year],
-          ['genre', track.genre],
-          ['trackNo', track.trackNo],
-          ['rawWOAS', track.rawWOAS]
-        ] as Array<[HistoryKey, string]>))
-      );
+      for (const track of targetTracks) {
+        rememberHistory(buildHistoryEntries(track));
+      }
       const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
       const warningSuffix = warningCount > 0 ? `；系统属性同步警告 ${warningCount} 个` : '';
       setSaveMessage(
@@ -866,7 +469,7 @@ function App() {
     if (!selectedIds.length) return;
     const removeCount = selectedIds.length;
     removeTracks(selectedIds);
-      setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
+    setSaveMessage(`已从列表移出 ${removeCount} 个文件（未删除本地文件）`);
   }
 
   async function onRevealExported(track: Track) {
@@ -968,498 +571,71 @@ function App() {
     setSaveMessage(`已删除预设：${preset.name}`);
   }
 
-  function renderHistoryChips(field: HistoryKey, onPick: (value: string) => void) {
-    const options = fieldHistory[field];
-    if (!options.length) return null;
-    return (
-      <div className="history-row">
-        {options.map((value) => (
-          <div key={`${field}-${value}`} className="history-chip-wrap">
-            <button
-              type="button"
-              className="history-chip"
-              title={value}
-              onClick={() => onPick(value)}
-            >
-              {historyLabel(value)}
-            </button>
-            <button
-              type="button"
-              className="history-chip-remove"
-              title="删除该历史记录"
-              aria-label="删除该历史记录"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                removeHistoryEntry(field, value);
-              }}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  function renderEmpty() {
-    return (
-      <div
-        className={`shell ${isMac ? 'macos-shell' : ''} ${dragging ? 'dragging-shell' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDropFiles}
-      >
-        <header className="topbar">
-          <h1>乐签 TuneTag</h1>
-        </header>
-        <main className="empty-main">
-          <div
-            className={`drop-zone ${dragging ? 'dragging' : ''}`}
-            onDragEnter={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setDragging(false);
-            }}
-            onDrop={onDropFiles}
-          >
-            <div className="drop-card">
-              <div className="drop-icon">📁</div>
-              <h2>音乐标签修改大师</h2>
-              <p>拖入媒体文件或文件夹开始工作</p>
-              <button className="primary" onClick={onPickFiles}>选择文件</button>
-            </div>
-          </div>
-          <div className="hint-row">
-            <span>支持 MP3 / FLAC / WAV / M4A</span>
-            <span>支持批量导入</span>
-          </div>
-          <button type="button" className="landing-brand-link" onClick={onLandingBrandClick}>
-            奇趣实验室 X 风声 联合出品
-          </button>
-        </main>
-      </div>
-    );
-  }
-
-  function renderSingleEditor(track: Track) {
-    const rules = getEditableRules(track);
-    const original = originals[track.id];
-    const showSourceField = Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
-    const showNoteField = Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
-    const coverSrc = track.removeCover
-      ? ''
-      : track.coverDataUrl
-        ? track.coverDataUrl
-        : track.coverPath
-          ? `file://${encodeURI(track.coverPath)}`
-        : track.embeddedCoverDataUrl
-          ? track.embeddedCoverDataUrl
-          : track.embeddedCoverPath
-            ? `file://${encodeURI(track.embeddedCoverPath)}`
-            : '';
-    return (
-      <div className="panel-group">
-        <h3>可编辑标签</h3>
-        <label>标题</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.title}
-          onChange={(e) => updateTrack(track.id, { title: e.target.value, rawTIT2: e.target.value })}
-          onBlur={(e) => rememberHistory([['title', e.target.value]])}
-        />
-        {renderHistoryChips('title', (value) => updateTrack(track.id, { title: value, rawTIT2: value }))}
-        <label>艺术家</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.artist}
-          onChange={(e) => updateTrack(track.id, { artist: e.target.value, rawTPE1: e.target.value })}
-          onBlur={(e) => rememberHistory([['artist', e.target.value]])}
-        />
-        {renderHistoryChips('artist', (value) => updateTrack(track.id, { artist: value, rawTPE1: value }))}
-        <label>专辑</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.album}
-          onChange={(e) => updateTrack(track.id, { album: e.target.value })}
-          onBlur={(e) => rememberHistory([['album', e.target.value]])}
-        />
-        {renderHistoryChips('album', (value) => updateTrack(track.id, { album: value }))}
-        <label>曲作者</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.composer}
-          onChange={(e) => updateTrack(track.id, { composer: e.target.value, rawTCOM: e.target.value })}
-          onBlur={(e) => rememberHistory([['composer', e.target.value]])}
-        />
-        {renderHistoryChips('composer', (value) => updateTrack(track.id, { composer: value, rawTCOM: value }))}
-        <label>词作者</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.lyricist}
-          onChange={(e) => updateTrack(track.id, { lyricist: e.target.value, rawTEXT: e.target.value })}
-          onBlur={(e) => rememberHistory([['lyricist', e.target.value]])}
-        />
-        {renderHistoryChips('lyricist', (value) => updateTrack(track.id, { lyricist: value, rawTEXT: value }))}
-        <label>流派</label>
-        <input
-          disabled={!rules.commonEditable}
-          className={!rules.commonEditable ? 'input-disabled' : ''}
-          value={track.genre}
-          onChange={(e) => updateTrack(track.id, { genre: e.target.value, rawTCON: e.target.value })}
-          onBlur={(e) => rememberHistory([['genre', e.target.value]])}
-        />
-        {renderHistoryChips('genre', (value) => updateTrack(track.id, { genre: value, rawTCON: value }))}
-        <div className="row-2">
-          <div>
-            <label>年份</label>
-            <input
-              disabled={!rules.commonEditable}
-              className={!rules.commonEditable ? 'input-disabled' : ''}
-              value={track.year}
-              onChange={(e) => updateTrack(track.id, { year: e.target.value })}
-              onBlur={(e) => rememberHistory([['year', e.target.value]])}
-            />
-            {renderHistoryChips('year', (value) => updateTrack(track.id, { year: value }))}
-          </div>
-          <div>
-            <label>曲目号</label>
-            <input
-              disabled={!rules.commonEditable}
-              className={!rules.commonEditable ? 'input-disabled' : ''}
-              value={track.trackNo}
-              onChange={(e) => updateTrack(track.id, { trackNo: e.target.value })}
-              onBlur={(e) => rememberHistory([['trackNo', e.target.value]])}
-            />
-            {renderHistoryChips('trackNo', (value) => updateTrack(track.id, { trackNo: value }))}
-          </div>
-        </div>
-        <label>歌词</label>
-        <textarea disabled={!rules.commonEditable} className={`lyrics-textarea ${!rules.commonEditable ? 'input-disabled' : ''}`} value={track.lyrics} onChange={(e) => updateTrack(track.id, { lyrics: e.target.value, rawUSLT: e.target.value })} rows={10} />
-        {showSourceField && (
-          <>
-            <label>自定义</label>
-            <input
-              disabled={!rules.commonEditable}
-              className={!rules.commonEditable ? 'input-disabled' : ''}
-              value={track.rawWOAS}
-              onChange={(e) => updateTrack(track.id, { rawWOAS: e.target.value, source: e.target.value })}
-              onBlur={(e) => rememberHistory([['rawWOAS', e.target.value]])}
-            />
-            {renderHistoryChips('rawWOAS', (value) => updateTrack(track.id, { rawWOAS: value, source: value }))}
-          </>
-        )}
-        {showNoteField && (
-          <>
-            <label>备注</label>
-            <textarea disabled={!rules.commonEditable} className={!rules.commonEditable ? 'input-disabled' : ''} value={track.rawCOMM} onChange={(e) => updateTrack(track.id, { rawCOMM: e.target.value, note: e.target.value })} rows={4} />
-            <p className="field-tip">这里会按原始标签写回文件。</p>
-          </>
-        )}
-
-        <label>封面图片</label>
-        {coverSrc ? (
-          <div className="cover-preview">
-            <img src={coverSrc} alt="封面预览" />
-          </div>
-        ) : (
-          <div className="cover-preview cover-preview-empty">暂无封面</div>
-        )}
-        <div className="cover-row">
-          <button className="ghost" disabled={!rules.coverEditable} onClick={() => onPickCover(track.id)}>
-            {track.coverPath ? '更换封面' : '选择封面'}
-          </button>
-          <button className="ghost" disabled={!rules.coverEditable || (!track.coverPath && !track.hasEmbeddedCover)} onClick={() => onRemoveCover(track)}>
-            删除封面
-          </button>
-        </div>
-
-        <details style={{ marginTop: 10 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>原始属性（参考）</summary>
-          <div className="meta-list" style={{ marginTop: 10 }}>
-            {track.rawAttributes.map((item) => (
-              <div key={`${item.key}-${item.value}`}>
-                <span>{item.key}</span>
-                <strong title={item.value}>{item.value}</strong>
-              </div>
-            ))}
-            {track.errorMessage ? <div><span>状态</span><strong>{track.errorMessage}</strong></div> : null}
-          </div>
-        </details>
-      </div>
-    );
-  }
-
-  function renderBatchEditor() {
-    const showBatchSourceField = selectedTracks.some((track) => {
-      const original = originals[track.id];
-      return Boolean(original?.rawWOAS?.trim() || track.rawWOAS?.trim());
-    });
-    const showBatchNoteField = selectedTracks.some((track) => {
-      const original = originals[track.id];
-      return Boolean(original?.rawCOMM?.trim() || track.rawCOMM?.trim());
-    });
-    return (
-      <div className="panel-group">
-        <h3>批量编辑（可编辑标签）</h3>
-        <p className="batch-tip">已选中 {selectedIds.length} 个文件，当前为批量编辑模式</p>
-        <div className="preset-toolbar">
-          <label>规则模板预设</label>
-          <div className="preset-select-row">
-            <select
-              value={activeBatchPresetId}
-              onChange={(e) => selectPreset(e.target.value)}
-            >
-              <option value="">选择已保存预设</option>
-              {batchPresets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="preset-action-buttons">
-            <button
-              type="button"
-              className={activeBatchPresetId ? 'primary' : 'ghost'}
-              disabled={!activeBatchPresetId}
-              onClick={onApplyBatchPreset}
-            >
-              应用
-            </button>
-            <button type="button" className="ghost" onClick={onOpenSavePresetDialog}>保存</button>
-            <button type="button" className="ghost" disabled={!activeBatchPresetId} onClick={onDeleteBatchPreset}>删除</button>
-          </div>
-        </div>
-
-        <label>标题</label>
-        <input
-          value={batchForm.title}
-          onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))}
-          onBlur={(e) => rememberHistory([['title', e.target.value]])}
-        />
-        {renderHistoryChips('title', (value) => setBatchForm((p) => ({ ...p, title: value })))}
-        <label>艺术家</label>
-        <input
-          value={batchForm.artist}
-          onChange={(e) => setBatchForm((p) => ({ ...p, artist: e.target.value }))}
-          onBlur={(e) => rememberHistory([['artist', e.target.value]])}
-        />
-        {renderHistoryChips('artist', (value) => setBatchForm((p) => ({ ...p, artist: value })))}
-        <label>专辑</label>
-        <input
-          value={batchForm.album}
-          onChange={(e) => setBatchForm((p) => ({ ...p, album: e.target.value }))}
-          onBlur={(e) => rememberHistory([['album', e.target.value]])}
-        />
-        {renderHistoryChips('album', (value) => setBatchForm((p) => ({ ...p, album: value })))}
-        <label>曲作者</label>
-        <input
-          value={batchForm.composer}
-          onChange={(e) => setBatchForm((p) => ({ ...p, composer: e.target.value }))}
-          onBlur={(e) => rememberHistory([['composer', e.target.value]])}
-        />
-        {renderHistoryChips('composer', (value) => setBatchForm((p) => ({ ...p, composer: value })))}
-        <label>词作者</label>
-        <input
-          value={batchForm.lyricist}
-          onChange={(e) => setBatchForm((p) => ({ ...p, lyricist: e.target.value }))}
-          onBlur={(e) => rememberHistory([['lyricist', e.target.value]])}
-        />
-        {renderHistoryChips('lyricist', (value) => setBatchForm((p) => ({ ...p, lyricist: value })))}
-        <label>流派</label>
-        <input
-          value={batchForm.genre}
-          onChange={(e) => setBatchForm((p) => ({ ...p, genre: e.target.value }))}
-          onBlur={(e) => rememberHistory([['genre', e.target.value]])}
-        />
-        {renderHistoryChips('genre', (value) => setBatchForm((p) => ({ ...p, genre: value })))}
-        <div className="row-2">
-          <div>
-            <label>年份</label>
-            <input
-              value={batchForm.year}
-              onChange={(e) => setBatchForm((p) => ({ ...p, year: e.target.value }))}
-              onBlur={(e) => rememberHistory([['year', e.target.value]])}
-            />
-            {renderHistoryChips('year', (value) => setBatchForm((p) => ({ ...p, year: value })))}
-          </div>
-          <div>
-            <label>曲目号</label>
-            <input
-              value={batchForm.trackNo}
-              onChange={(e) => setBatchForm((p) => ({ ...p, trackNo: e.target.value }))}
-              onBlur={(e) => rememberHistory([['trackNo', e.target.value]])}
-            />
-            {renderHistoryChips('trackNo', (value) => setBatchForm((p) => ({ ...p, trackNo: value })))}
-          </div>
-        </div>
-        <label>歌词</label>
-        <textarea className="lyrics-textarea" rows={8} value={batchForm.lyrics} onChange={(e) => setBatchForm((p) => ({ ...p, lyrics: e.target.value }))} />
-        {showBatchSourceField && (
-          <>
-            <label>自定义</label>
-            <input
-              value={batchForm.rawWOAS}
-              onChange={(e) => setBatchForm((p) => ({ ...p, rawWOAS: e.target.value }))}
-              onBlur={(e) => rememberHistory([['rawWOAS', e.target.value]])}
-            />
-            {renderHistoryChips('rawWOAS', (value) => setBatchForm((p) => ({ ...p, rawWOAS: value })))}
-          </>
-        )}
-        {showBatchNoteField && (
-          <>
-            <label>备注</label>
-            <textarea rows={3} value={batchForm.rawCOMM} onChange={(e) => setBatchForm((p) => ({ ...p, rawCOMM: e.target.value }))} />
-          </>
-        )}
-
-        <p className="field-tip batch-apply-tip">
-          批量模式下点击右上角“保存”，将自动应用并保存当前选中文件
-          <br />
-          标题、艺术家留空：不修改
-          <br />
-          其它字段留空：清空写入
-        </p>
-      </div>
-    );
-  }
-
-  function renderPresetNameModal() {
-    if (!showPresetNameModal) return null;
-    return (
-      <div className="modal-mask" onClick={() => setShowPresetNameModal(false)}>
-        <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-          <h4>保存批量预设</h4>
-          <p>请输入预设名称</p>
-          <input
-            type="text"
-            autoFocus
-            value={pendingPresetName}
-            onChange={(e) => setPendingPresetName(e.target.value)}
-            maxLength={32}
-            placeholder="例如：电音专辑标准化"
-          />
-          <div className="modal-actions">
-            <button type="button" className="ghost" onClick={() => setShowPresetNameModal(false)}>取消</button>
-            <button type="button" className="primary" onClick={onSaveBatchPreset}>确认保存</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   function renderWorkspace() {
     return (
-      <div
-        className={`shell ${isMac ? 'macos-shell' : ''} ${dragging ? 'dragging-shell' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDropFiles}
-      >
+      <>
         <header className="topbar">
           <h1>乐签 TuneTag</h1>
           <div className="actions">
-            <button className="ghost" onClick={onPickFiles}>继续导入</button>
+            <button className="ghost" onClick={onPickFiles}>
+              继续导入
+            </button>
             <button className="ghost" disabled={!selectedIds.length || saving} onClick={onRemoveSelected}>
               移出列表
             </button>
-            <button className="primary" disabled={!canSave} onClick={onSave}>
+            <button
+              className="primary"
+              disabled={!canSave}
+              onClick={onSave}
+              title="将带新标签的文件导出到所选文件夹（非原地写回；目标为源目录并选“覆盖”时原地改写）"
+            >
               {saving ? '保存中...' : '保存'}
             </button>
           </div>
         </header>
 
         <main className="workspace">
-          <section className="table-pane">
-            <div className="table-toolbar">
-              <label className="select-all">
-                <input
-                  type="checkbox"
-                  checked={filteredSorted.length > 0 && filteredSorted.every((t) => selectedSet.has(t.id))}
-                  onChange={(e) => selectAllCurrent(e.target.checked)}
-                />
-                全选
-              </label>
-            </div>
-
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th onClick={() => toggleSort('fileName')}>文件名</th>
-                    <th onClick={() => toggleSort('artist')}>艺术家</th>
-                    <th onClick={() => toggleSort('album')}>专辑</th>
-                    <th onClick={() => toggleSort('year')}>年份</th>
-                    <th onClick={() => toggleSort('status')}>状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSorted.map((track) => {
-                    const selected = selectedSet.has(track.id);
-                    return (
-                      <tr key={track.id} className={selected ? 'selected' : ''} onClick={() => selectOnly(track.id)}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={(e) => toggleRow(track.id, e.target.checked)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </td>
-                        <td title={track.fileName}>{track.fileName}</td>
-                        <td title={track.artist}>{track.artist}</td>
-                        <td title={track.album}>{track.album}</td>
-                        <td>{track.year}</td>
-                        <td className={track.status === 'error' ? 'status-error' : track.status === 'dirty' ? 'status-dirty' : track.status === 'exported' ? 'status-exported' : ''}>
-                          <span className="status-cell">
-                            {statusLabel(track)}
-                            {track.status === 'exported' && track.exportedPath ? (
-                              <button
-                                type="button"
-                                className="status-folder-btn"
-                                title="打开所在文件夹"
-                                aria-label="打开所在文件夹"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onRevealExported(track);
-                                }}
-                              >
-                                📂
-                              </button>
-                            ) : null}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <FileTable
+            tracks={filteredSorted}
+            selectedSet={selectedSet}
+            onToggleSort={toggleSort}
+            onSelectAll={selectAllCurrent}
+            onToggleRow={toggleRow}
+            onSelectOnly={selectOnly}
+            onRevealExported={onRevealExported}
+          />
 
           <aside className="side-pane">
-            {selectedTracks.length === 1 && renderSingleEditor(selectedTracks[0])}
-            {selectedTracks.length > 1 && renderBatchEditor()}
+            {selectedTracks.length === 1 && (
+              <SingleEditor
+                track={selectedTracks[0]}
+                original={originals[selectedTracks[0].id]}
+                fieldHistory={fieldHistory}
+                updateTrack={updateTrack}
+                rememberHistory={rememberHistory}
+                removeHistoryEntry={removeHistoryEntry}
+                onPickCover={onPickCover}
+                onRemoveCover={onRemoveCover}
+              />
+            )}
+            {selectedTracks.length > 1 && (
+              <BatchEditor
+                selectedIds={selectedIds}
+                selectedTracks={selectedTracks}
+                originals={originals}
+                fieldHistory={fieldHistory}
+                batchForm={batchForm}
+                setBatchForm={setBatchForm}
+                activeBatchPresetId={activeBatchPresetId}
+                batchPresets={batchPresets}
+                onSelectPreset={selectPreset}
+                onApplyPreset={onApplyBatchPreset}
+                onOpenSavePresetDialog={onOpenSavePresetDialog}
+                onDeletePreset={onDeleteBatchPreset}
+                rememberHistory={rememberHistory}
+                removeHistoryEntry={removeHistoryEntry}
+              />
+            )}
             {selectedTracks.length === 0 && <p className="placeholder">请选择一个或多个文件</p>}
           </aside>
         </main>
@@ -1468,9 +644,12 @@ function App() {
           <div>
             已导入 {tracks.length} 个文件，待保存 {dirtyCount} 个
             {saving && progress.total > 0 ? `（${progress.completed}/${progress.total}）` : ''}
+            <span className="footer-hint"> · 保存＝导出到所选文件夹</span>
           </div>
           <div className="footer-actions">
-            <button className="ghost" onClick={resetDirty} disabled={!dirtyCount || saving}>取消修改</button>
+            <button className="ghost" onClick={resetDirty} disabled={!dirtyCount || saving}>
+              取消修改
+            </button>
           </div>
         </footer>
 
@@ -1502,12 +681,36 @@ function App() {
         )}
 
         {saveMessage && <div className="toast">{saveMessage}</div>}
-        {renderPresetNameModal()}
-      </div>
+        <PresetNameModal
+          show={showPresetNameModal}
+          pendingName={pendingPresetName}
+          setPendingName={setPendingPresetName}
+          onSave={onSaveBatchPreset}
+          onClose={() => setShowPresetNameModal(false)}
+        />
+      </>
     );
   }
 
-  return hasImported ? renderWorkspace() : renderEmpty();
+  return (
+    <div
+      className={`shell ${isMac ? 'macos-shell' : ''} ${dragging ? 'dragging-shell' : ''}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDropFiles}
+    >
+      {hasImported ? renderWorkspace() : (
+        <EmptyState
+          dragging={dragging}
+          setDragging={setDragging}
+          onDropFiles={onDropFiles}
+          onPickFiles={onPickFiles}
+          onLandingBrandClick={onLandingBrandClick}
+        />
+      )}
+    </div>
+  );
 }
-
-export default App;

@@ -37,3 +37,6 @@ release-icon-test/
 # SwiftPM build artifacts
 TuneTagMac/.build/
 TuneTagMac/.swiftpm/
+
+# Agent working memory (project-scoped, not source)
+.workbuddy/
