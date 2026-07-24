@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>乐签 TuneTag · 极简音乐标签编辑器</title>
+  <meta name="description" content="乐签（TuneTag）是一款 macOS 桌面音乐标签编辑器：拖入即导入，单文件精修与批量设值，封面与歌词编辑，安全导出到所选文件夹。" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f6f7fb;
+      --bg-dark: #0e1020;
+      --ink: #15172b;
+      --ink-soft: #5b5f73;
+      --line: #e7e9f2;
+      --brand: #4f46e5;
+      --brand-strong: #4338ca;
+      --brand-soft: #eef0ff;
+      --ok: #0e9f6e;
+      --radius: 14px;
+      --maxw: 1080px;
+      --shadow: 0 12px 40px rgba(20, 23, 43, 0.08);
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+    /* Nav */
+    header.nav {
+      position: sticky; top: 0; z-index: 30;
+      background: rgba(255,255,255,0.82);
+      backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+    .brand .logo {
+      width: 32px; height: 32px; border-radius: 9px;
+      object-fit: cover;
+      display: block;
+      box-shadow: 0 6px 16px rgba(79,70,229,0.25);
+    }
+    .brand small { color: var(--ink-soft); font-weight: 500; font-size: 13px; letter-spacing: .5px; }
+    nav.links { display: flex; align-items: center; gap: 28px; }
+    nav.links a:not(.btn) { color: var(--ink-soft); font-size: 15px; transition: color .15s; }
+    nav.links a:not(.btn):hover { color: var(--ink); }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      border-radius: 10px; padding: 10px 18px; font-size: 15px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent; transition: all .15s;
+    }
+    .btn-primary { background: var(--brand); color: #fff; box-shadow: 0 8px 20px rgba(79,70,229,0.28); }
+    .btn-primary:hover { background: var(--brand-strong); transform: translateY(-1px); }
+    .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+    .btn-ghost:hover { border-color: var(--brand); color: var(--brand); }
+    .menu-toggle { display: none; }
+
+    /* Hero */
+    .hero { padding: 84px 0 64px; background: radial-gradient(1200px 400px at 70% -10%, var(--brand-soft), transparent); }
+    .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--brand-soft); color: var(--brand-strong);
+      font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+    }
+    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+    h1.title { font-size: 46px; line-height: 1.15; margin: 18px 0 14px; letter-spacing: -0.5px; }
+    h1.title span { color: var(--brand); }
+    .hero p.lead { font-size: 18px; color: var(--ink-soft); margin: 0 0 28px; max-width: 30em; }
+    .hero-cta { display: flex; gap: 14px; flex-wrap: wrap; }
+    .hero-note { margin-top: 16px; font-size: 13px; color: var(--ink-soft); }
+    .hero-note code { background: var(--bg-soft); padding: 2px 6px; border-radius: 6px; }
+
+    /* App mockup */
+    .mock {
+      background: var(--bg-dark); border-radius: 16px; overflow: hidden;
+      box-shadow: var(--shadow); border: 1px solid #1c1f38;
+    }
+    .mock-bar { display: flex; gap: 7px; padding: 12px 14px; background: #161a32; }
+    .mock-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3f63; display: inline-block; }
+    .mock-bar i:first-child { background: #ff5f57; } .mock-bar i:nth-child(2){ background:#febc2e; } .mock-bar i:nth-child(3){ background:#28c840; }
+    .mock-body { display: grid; grid-template-columns: 200px 1fr; min-height: 280px; }
+    .mock-side { background: #11142a; padding: 16px; border-right: 1px solid #1c1f38; }
+    .mock-side .row { height: 10px; border-radius: 5px; background: #252a4a; margin-bottom: 12px; }
+    .mock-side .row.active { background: var(--brand); width: 70%; }
+    .mock-main { padding: 18px; }
+    .mock-main .field { height: 34px; border-radius: 8px; background: #1a1f3d; border: 1px solid #2a3056; margin-bottom: 10px; }
+    .mock-main .field.w { width: 80%; } .mock-main .field.m { width: 55%; }
+    .mock-main .chip { display:inline-block; height: 22px; width: 56px; border-radius: 999px; background: #2a3056; margin: 4px 6px 0 0; }
+    .mock-drop { margin-top: 10px; border: 1px dashed #343a63; border-radius: 10px; height: 64px; display:grid; place-items:center; color:#5b618c; font-size: 12px; }
+
+    /* Section */
+    section { padding: 76px 0; }
+    .sec-head { text-align: center; max-width: 640px; margin: 0 auto 48px; }
+    .sec-head .kicker { color: var(--brand); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; }
+    .sec-head h2 { font-size: 32px; margin: 10px 0 12px; letter-spacing: -0.4px; }
+    .sec-head p { color: var(--ink-soft); font-size: 17px; margin: 0; }
+
+    /* Features */
+    .features { background: var(--bg-soft); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .card {
+      background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 26px 24px; transition: transform .15s, box-shadow .15s;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+    .card .ic {
+      width: 44px; height: 44px; border-radius: 12px; background: var(--brand-soft);
+      color: var(--brand-strong); display: grid; place-items: center; font-size: 22px; margin-bottom: 16px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+
+    /* Steps */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; counter-reset: s; }
+    .step { position: relative; padding-top: 8px; }
+    .step .num {
+      width: 38px; height: 38px; border-radius: 50%; background: var(--brand); color: #fff;
+      display: grid; place-items: center; font-weight: 700; margin-bottom: 16px;
+    }
+    .step h3 { margin: 0 0 6px; font-size: 19px; }
+    .step p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+
+    /* Showcase / download band */
+    .band { background: var(--bg-dark); color: #fff; border-radius: 20px; padding: 56px 40px; text-align: center; }
+    .band h2 { font-size: 30px; margin: 0 0 12px; }
+    .band p { color: #b9bce0; font-size: 17px; margin: 0 0 26px; }
+    .band .btn-primary { background: #fff; color: var(--brand-strong); box-shadow: none; }
+    .band .btn-primary:hover { background: #eef0ff; }
+
+    /* Footer */
+    footer { border-top: 1px solid var(--line); padding: 36px 0; color: var(--ink-soft); font-size: 14px; }
+    .foot-inner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+    .foot-links { display: flex; gap: 22px; }
+    .foot-links a:hover { color: var(--brand); }
+    footer a { color: var(--ink-soft); transition: color .15s; }
+    footer a:hover { color: var(--brand); }
+
+    @media (max-width: 900px) {
+      .hero-grid { grid-template-columns: 1fr; }
+      .grid, .steps { grid-template-columns: 1fr; }
+      nav.links { display: none; }
+      .menu-toggle { display: inline-flex; }
+      h1.title { font-size: 36px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <div class="brand">
+        <img class="logo" src="logo.png" alt="乐签 TuneTag 标志" />
+        乐签 <small>TuneTag</small>
+      </div>
+      <nav class="links">
+        <a href="https://github.com/citoma/TuneTag" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn btn-primary" href="#download">下载</a>
+      </nav>
+      <a class="menu-toggle" href="https://github.com/citoma/TuneTag" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="pill"><span class="dot"></span> 开源项目</span>
+        <h1 class="title">极简音乐标签编辑器</h1>
+        <p class="lead">拖入文件，精修或批量修改标题、艺术家、专辑、封面与歌词，安全地导出到所选文件夹——不破坏你的原始文件。</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#download">免费下载 macOS</a>
+          <a class="btn btn-ghost" href="#features">查看功能</a>
+        </div>
+        <p class="hero-note">支持 MP3 · FLAC · M4A · WAV 等常见格式 · 无需账号</p>
+      </div>
+
+      <!-- CSS app mockup -->
+      <div class="mock" aria-hidden="true">
+        <div class="mock-bar"><i></i><i></i><i></i></div>
+        <div class="mock-body">
+          <div class="mock-side">
+            <div class="row active"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row" style="width:60%"></div>
+          </div>
+          <div class="mock-main">
+            <div class="field w"></div>
+            <div class="field m"></div>
+            <div class="field w"></div>
+            <div class="chip"></div><div class="chip"></div><div class="chip"></div>
+            <div class="mock-drop">拖入文件或文件夹</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="kicker">核心功能</div>
+        <h2>把标签整理，变成一件轻松的事</h2>
+        <p>从导入到导出，每一步都为「少操作、不出错」而设计。</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="ic">⬇</div>
+          <h3>拖拽即导入</h3>
+          <p>支持拖入文件、批量文件或整个文件夹，自动递归读取并按格式过滤，列表即刻呈现。</p>
+        </div>
+        <div class="card">
+          <div class="ic">✎</div>
+          <h3>单文件精修</h3>
+          <p>标题、艺术家、专辑、年份、曲目号、曲作者、词作者、流派、歌词与封面，逐项编辑、即时预览。</p>
+        </div>
+        <div class="card">
+          <div class="ic">⚡</div>
+          <h3>批量设值 + 清空</h3>
+          <p>为多首曲目统一写入同一字段值，或一键清空指定字段，整张合集一次搞定。</p>
+        </div>
+        <div class="card">
+          <div class="ic">🖼</div>
+          <h3>封面与歌词</h3>
+          <p>MP3 支持内嵌封面编辑，歌词可内嵌写入；常用值会以历史芯片形式一键回填。</p>
+        </div>
+        <div class="card">
+          <div class="ic">🛡</div>
+          <h3>安全导出</h3>
+          <p>「保存」即导出到你选择的文件夹，默认不原地覆盖原始文件，整理过程零风险。</p>
+        </div>
+        <div class="card">
+          <div class="ic">📊</div>
+          <h3>状态可视化</h3>
+          <p>未修改 / 已修改 / 已导出 / 保存失败一目了然，导入与导出数量实时统计。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="kicker">工作方式</div>
+        <h2>三步完成标签整理</h2>
+        <p>无需学习成本，导入即可上手。</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>拖入文件</h3>
+          <p>把音乐文件或文件夹拖进窗口，乐签自动识别并列出可编辑曲目。</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>编辑标签</h3>
+          <p>单选精修或批量设值/清空，封面与歌词一并处理，历史值随取随用。</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>导出保存</h3>
+          <p>选择目标文件夹导出，进度与成功/失败反馈清晰，原始文件保持不变。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download band -->
+  <section id="download">
+    <div class="wrap">
+      <div class="band">
+        <h2>开始整理你的音乐库</h2>
+        <p>乐签目前提供 macOS 版本。下载后拖入文件即可使用，完全免费。</p>
+        <a class="btn btn-primary" href="https://github.com/citoma/TuneTag/releases/latest/download/TuneTag.dmg">下载 macOS 版（.dmg）</a>
+        <p style="margin-top:18px;font-size:13px;color:#8b8fc0;">macOS（Apple 芯片）· 约 150 MB · 通过 GitHub Releases 开源分发</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot-inner">
+      <div>© 2026 乐签 TuneTag · 极简音乐标签编辑器</div>
+      <a href="https://github.com/citoma/TuneTag" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </footer>
+
+</body>
+</html>
