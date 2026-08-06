@@ -117,10 +117,12 @@ function signApp({ arch, slim }) {
   const outDir = slim ? 'release-slim' : 'release';
   const appPath = path.join(projectRoot, outDir, `TuneTag-darwin-${arch}`, 'TuneTag.app');
   const entitlementsPath = path.join(projectRoot, 'electron', 'entitlements.plist');
-  // adhoc 签名('-' 表示无证书) + entitlements,--deep 递归签主进程与所有 Helper 子进程,
-  // 赋予 allow-jit 等授权,修复 Apple Silicon 上渲染进程 JIT 初始化 SIGTRAP 崩溃(打开闪退)。
-  // 无需 Apple 证书、无需公证,符合官网直接分发。
-  run('codesign', ['--force', '--deep', '--sign', '-', '--entitlements', entitlementsPath, appPath]);
+  // adhoc 签名('-' 表示无证书) + --options runtime 启用 Hardened Runtime,
+  // 否则 allow-jit 等 entitlement 会被静默忽略(渲染进程 V8 JIT 仍会崩溃闪退)。
+  // --deep 递归签主进程与所有 Helper 子进程,赋予 allow-jit 等授权,
+  // 修复 Apple Silicon / macOS 26 上渲染进程 JIT 初始化 SIGTRAP 崩溃(打开闪退)。
+  // 仍是 adhoc(无证书、无公证),符合官网直接分发;Gatekeeper 拦截不变(需 xattr -cr / 右键打开)。
+  run('codesign', ['--force', '--deep', '--sign', '-', '--options', 'runtime', '--entitlements', entitlementsPath, appPath]);
 }
 
 function createDmg({ arch, slim }) {
