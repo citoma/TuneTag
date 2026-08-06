@@ -20,7 +20,7 @@
 - 本地构建产物：`tunetag-web/release/TuneTag.dmg`（16:01 重建，含 no-sandbox 修复，无诊断残留，签名 runtime）。
 
 ## 下一步
-1. **官网部署（如适用）**：若 `website/index.html` 是独立托管（tunetag.keecheer.com 走 Cloudflare，非 GitHub Pages），需手动同步本次文案改动（仅体积文本，下载链接无影响）。
+1. ~~**官网部署（Cloudflare Pages）**：tunetag.keecheer.com 为独立 Cloudflare Pages 项目 `tunetag`（Git Provider: No，无 git 联动，靠 `wrangler pages deploy` 上传）。已用 wrangler 将本地 `website/` 部署上线，线上文案已从「约 150 MB」更新为「约 180 MB」（部署 ID 229fd3cb，HTTP 200 验证通过）。~~ ✅ 已完成。
 2. **观察反馈**：收集用户升级到 1.5 后在 macOS 26 的实际运行反馈，确认无回归。
 3. **长期待办**：本仓库尚无 Makefile / `make check` 目标、无 PROGRESS/DECISIONS 历史文件；若需要规范化工作流，可补建。
 4. **Electron 升级（备选）**：若后续大版本 macOS 仍出现同类崩溃，可考虑升级 Electron 37.10.3（V8 版本偏旧）。本次 no-sandbox 已规避，暂不必动。
