@@ -10,6 +10,12 @@ import ffmpegPath from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 import NodeID3 from 'node-id3';
 
+// macOS 26 下 Chromium 辅助进程（GPU/工具进程）的沙箱会限制 V8 JIT 可执行内存映射，
+// 导致 helper 进程在 v8::V8::EnableWebAssemblyTrapHandler 处 SIGTRAP 崩溃（主进程正常）。
+// 关闭沙箱后 helper 继承该开关，避免 JIT 被拦。本应用仅加载本地文件与本地 React 包，威胁面极小。
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+
 const SUPPORTED_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const WRITABLE_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a']);
 const FFPROBE_PATH = ffprobeStatic?.path;
