@@ -244,6 +244,8 @@ export type AppState = {
   appendTracks: (tracks: Track[]) => { added: number; duplicates: number };
   setSelectedIds: (ids: string[]) => void;
   updateTrack: (id: string, patch: Partial<Track>) => void;
+  // 后台 ffprobe 补推的标签合并：同时写入 tracks 与 originals 基线，避免被误标 dirty。
+  mergeResolvedTags: (id: string, patch: Partial<Track>) => void;
   bulkUpdate: (ids: string[], updater: (track: Track) => Partial<Track>) => void;
   removeTracks: (ids: string[]) => void;
   resetDirty: () => void;
@@ -302,6 +304,15 @@ export const useStore = create<AppState>((set, get) => ({
       };
     });
     set({ tracks: next });
+  },
+  mergeResolvedTags: (id, patch) => {
+    // 后台补推（ffprobe 独有标签）：并入显示值，同时并入 originals 基线，
+    // 使 computeDirty 仍与“导入快照”比较 → 不会因补充标签而误标 dirty。
+    const { tracks, originals } = get();
+    const nextTracks = tracks.map((track) => (track.id === id ? { ...track, ...patch } : track));
+    const base = originals[id];
+    const nextOriginals = base ? { ...originals, [id]: { ...base, ...patch } } : originals;
+    set({ tracks: nextTracks, originals: nextOriginals });
   },
   bulkUpdate: (ids, updater) => {
     const setIds = new Set(ids);

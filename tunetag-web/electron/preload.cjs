@@ -35,5 +35,10 @@ contextBridge.exposeInMainWorld('tunetag', {
     const handler = (_event, paths) => callback(Array.isArray(paths) ? paths : []);
     ipcRenderer.on('external-open-paths', handler);
     return () => ipcRenderer.removeListener('external-open-paths', handler);
+  },
+  onWavTagsResolved: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('wav-tags-resolved', handler);
+    return () => ipcRenderer.removeListener('wav-tags-resolved', handler);
   }
 });

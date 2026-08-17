@@ -36,6 +36,7 @@ export default function App() {
     appendTracks,
     setSelectedIds,
     updateTrack,
+    mergeResolvedTags,
     bulkUpdate,
     removeTracks,
     resetDirty,
@@ -205,6 +206,16 @@ export default function App() {
     });
     return unsubscribe;
   }, [api, importPaths]);
+
+  // 后台 ffprobe 解析完成后，主进程把补充到的 WAV 标签差量推回，合并进对应曲目（不误标 dirty）。
+  useEffect(() => {
+    if (!api?.onWavTagsResolved) return;
+    const unsubscribe = api.onWavTagsResolved((payload) => {
+      if (!payload || !payload.path || !payload.tags) return;
+      mergeResolvedTags(payload.path, payload.tags);
+    });
+    return unsubscribe;
+  }, [api, mergeResolvedTags]);
 
   const bootImportedRef = useRef(false);
   useEffect(() => {

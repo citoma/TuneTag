@@ -816,6 +816,31 @@ async function readWhereFroms(filePath) {
   }
 }
 
+// 后台补跑 ffprobe 的并发闸：避免一次导入大量 WAV 时同时拉起几十个 ffprobe 进程。
+// 编辑器已在主链用 music-metadata + NodeID3 秒出，这里只是“锦上添花”地补回 ffprobe 独有标签。
+const WAV_PROBE_CONCURRENCY = 4;
+let wavProbeRunning = 0;
+const wavProbeQueue = [];
+
+function enqueueWavProbe(run) {
+  wavProbeQueue.push(run);
+  drainWavProbeQueue();
+}
+
+function drainWavProbeQueue() {
+  while (wavProbeRunning < WAV_PROBE_CONCURRENCY && wavProbeQueue.length) {
+    const run = wavProbeQueue.shift();
+    wavProbeRunning += 1;
+    Promise.resolve()
+      .then(run)
+      .catch(() => {})
+      .finally(() => {
+        wavProbeRunning -= 1;
+        drainWavProbeQueue();
+      });
+  }
+}
+
 async function readMetadata(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const format = ext.replace('.', '').toUpperCase();
@@ -830,14 +855,11 @@ async function readMetadata(filePath) {
     const stat = await fs.stat(filePath);
     const sourceTag = readSourceTag(parsed);
     const whereFromSource = await readWhereFroms(filePath);
-    const wavTags = ext === '.wav' ? await probeWavTags(filePath).catch(() => null) : null;
     const wavId3 = ext === '.wav' ? readWavId3Tags(filePath) : null;
     const hasEmbeddedCover = Array.isArray(common.picture) && common.picture.length > 0;
     const embeddedCoverDataUrl = '';
     const embeddedCoverPath = '';
     const fallbackComment = readCommentTag(parsed);
-    const wavComment = firstNonEmpty(wavTags?.comment, fallbackComment);
-    const wavParsed = parseWavCommentAndSource(wavComment);
     const commonTitle = readCommonText(common, 'title');
     const commonArtist = readCommonText(common, 'artist');
     const commonAlbum = readCommonText(common, 'album');
@@ -854,85 +876,113 @@ async function readMetadata(filePath) {
     const wavNativeLyrics = readNativeFirst(parsed, ['USLT']);
     const wavNativeTrackNo = readNativeFirst(parsed, ['TRCK']);
     const wavNativeSource = readNativeFirst(parsed, ['WOAS', 'WXXX', 'TXXX:url', 'SOURCE', 'TXXX:SOURCE']);
-    const resolvedTitle = ext === '.wav'
-      ? (
-        wavId3?.title ||
-        wavTags?.title ||
-        (!looksLikeMojibake(wavNativeTitle) ? wavNativeTitle : '') ||
-        (!looksLikeMojibake(commonTitle) ? commonTitle : '') ||
-        fileStem
-      )
-      : (commonTitle || fileStem);
-    const resolvedArtist = ext === '.wav'
-      ? (
-        wavId3?.artist ||
-        wavTags?.artist ||
-        (!looksLikeMojibake(wavNativeArtist) ? wavNativeArtist : '') ||
-        (!looksLikeMojibake(commonArtist) ? commonArtist : '') ||
-        ''
-      )
-      : (commonArtist || '');
-    const resolvedAlbum = ext === '.wav'
-      ? (
-        wavId3?.album ||
-        wavTags?.album ||
-        (!looksLikeMojibake(wavNativeAlbum) ? wavNativeAlbum : '') ||
-        (!looksLikeMojibake(commonAlbum) ? commonAlbum : '') ||
-        ''
-      )
-      : (commonAlbum || '');
-    const resolvedComposer = ext === '.wav'
-      ? (wavId3?.composer || wavTags?.composer || wavNativeComposer || commonComposer || '')
-      : (commonComposer || '');
-    const resolvedLyricist = ext === '.wav'
-      ? (wavId3?.lyricist || wavTags?.lyricist || wavNativeLyricist || commonLyricist || '')
-      : (commonLyricist || '');
-    const resolvedYear =
-      ext === '.wav'
-        ? (wavId3?.year || wavTags?.year || (common.year ? String(common.year) : '') || '')
+
+    // 依赖 ffprobe(wavTags) 的取值集中到闭包里。主链传 null 立即出图；
+    // 后台补跑 ffprobe 后再用真实 wavTags 重新计算，做差量推送（见下方 enqueueWavProbe）。
+    const computeResolved = (wavTagsArg) => {
+      const wavComment = firstNonEmpty(wavTagsArg?.comment, fallbackComment);
+      const wavParsed = parseWavCommentAndSource(wavComment);
+      const title = ext === '.wav'
+        ? (
+          wavId3?.title ||
+          wavTagsArg?.title ||
+          (!looksLikeMojibake(wavNativeTitle) ? wavNativeTitle : '') ||
+          (!looksLikeMojibake(commonTitle) ? commonTitle : '') ||
+          fileStem
+        )
+        : (commonTitle || fileStem);
+      const artist = ext === '.wav'
+        ? (
+          wavId3?.artist ||
+          wavTagsArg?.artist ||
+          (!looksLikeMojibake(wavNativeArtist) ? wavNativeArtist : '') ||
+          (!looksLikeMojibake(commonArtist) ? commonArtist : '') ||
+          ''
+        )
+        : (commonArtist || '');
+      const album = ext === '.wav'
+        ? (
+          wavId3?.album ||
+          wavTagsArg?.album ||
+          (!looksLikeMojibake(wavNativeAlbum) ? wavNativeAlbum : '') ||
+          (!looksLikeMojibake(commonAlbum) ? commonAlbum : '') ||
+          ''
+        )
+        : (commonAlbum || '');
+      const composer = ext === '.wav'
+        ? (wavId3?.composer || wavTagsArg?.composer || wavNativeComposer || commonComposer || '')
+        : (commonComposer || '');
+      const lyricist = ext === '.wav'
+        ? (wavId3?.lyricist || wavTagsArg?.lyricist || wavNativeLyricist || commonLyricist || '')
+        : (commonLyricist || '');
+      const year = ext === '.wav'
+        ? (wavId3?.year || wavTagsArg?.year || (common.year ? String(common.year) : '') || '')
         : (common.year ? String(common.year) : '');
-    const resolvedTrackNo = ext === '.wav'
-      ? (wavId3?.trackNo || wavTags?.trackNo || wavNativeTrackNo || toTrackNo(common.track) || '')
-      : toTrackNo(common.track);
-    const resolvedGenre = ext === '.wav'
-      ? (wavId3?.genre || wavTags?.genre || wavNativeGenre || commonGenre || '')
-      : (commonGenre || '');
-    const resolvedLyrics = ext === '.wav'
-      ? (wavId3?.lyrics || wavNativeLyrics || wavTags?.lyrics || commonLyrics || '')
-      : (commonLyrics || '');
-    const resolvedNote = ext === '.wav' ? (wavId3?.note || wavParsed.note || wavTags?.comment || fallbackComment) : fallbackComment;
-    const resolvedSource = ext === '.wav'
-      ? (wavId3?.source || wavTags?.source || wavParsed.source || wavNativeSource || sourceTag || whereFromSource)
-      : (sourceTag || whereFromSource);
-    const rawTIT2 = ext === '.wav' ? (wavId3?.rawTitle || resolvedTitle) : (readNativeFirst(parsed, ['TIT2']) || resolvedTitle);
-    const rawTPE1 = ext === '.wav' ? (wavId3?.rawArtist || resolvedArtist) : (readNativeFirst(parsed, ['TPE1']) || resolvedArtist);
-    const rawTCOM = ext === '.wav' ? (wavId3?.rawComposer || resolvedComposer) : (readNativeFirst(parsed, ['TCOM']) || resolvedComposer);
-    const rawTEXT = ext === '.wav' ? (wavId3?.rawLyricist || resolvedLyricist) : (readNativeFirst(parsed, ['TEXT']) || resolvedLyricist);
-    const rawTCON = ext === '.wav' ? (wavId3?.rawGenre || resolvedGenre) : (readNativeFirst(parsed, ['TCON']) || resolvedGenre);
-    const rawUSLT = ext === '.wav' ? (wavId3?.rawLyrics || resolvedLyrics) : (readNativeFirst(parsed, ['USLT']) || resolvedLyrics);
-    const rawCOMM = ext === '.wav'
-      ? (wavId3?.rawComment || resolvedNote)
-      : (readNativeFirst(parsed, ['COMM', 'TXXX:comment']) || resolvedNote);
-    const rawWOAS = ext === '.wav'
-      ? (wavId3?.rawSource || resolvedSource)
-      : (readNativeFirst(parsed, ['WOAS', 'WXXX', 'TXXX:url']) || resolvedSource);
+      const trackNo = ext === '.wav'
+        ? (wavId3?.trackNo || wavTagsArg?.trackNo || wavNativeTrackNo || toTrackNo(common.track) || '')
+        : toTrackNo(common.track);
+      const genre = ext === '.wav'
+        ? (wavId3?.genre || wavTagsArg?.genre || wavNativeGenre || commonGenre || '')
+        : (commonGenre || '');
+      const lyrics = ext === '.wav'
+        ? (wavId3?.lyrics || wavNativeLyrics || wavTagsArg?.lyrics || commonLyrics || '')
+        : (commonLyrics || '');
+      const note = ext === '.wav' ? (wavId3?.note || wavParsed.note || wavTagsArg?.comment || fallbackComment) : fallbackComment;
+      const source = ext === '.wav'
+        ? (wavId3?.source || wavTagsArg?.source || wavParsed.source || wavNativeSource || sourceTag || whereFromSource)
+        : (sourceTag || whereFromSource);
+      const rawTIT2 = ext === '.wav' ? (wavId3?.rawTitle || title) : (wavNativeTitle || title);
+      const rawTPE1 = ext === '.wav' ? (wavId3?.rawArtist || artist) : (wavNativeArtist || artist);
+      const rawTCOM = ext === '.wav' ? (wavId3?.rawComposer || composer) : (wavNativeComposer || composer);
+      const rawTEXT = ext === '.wav' ? (wavId3?.rawLyricist || lyricist) : (wavNativeLyricist || lyricist);
+      const rawTCON = ext === '.wav' ? (wavId3?.rawGenre || genre) : (wavNativeGenre || genre);
+      const rawUSLT = ext === '.wav' ? (wavId3?.rawLyrics || lyrics) : (wavNativeLyrics || lyrics);
+      const rawCOMM = ext === '.wav'
+        ? (wavId3?.rawComment || note)
+        : (readNativeFirst(parsed, ['COMM', 'TXXX:comment']) || note);
+      const rawWOAS = ext === '.wav'
+        ? (wavId3?.rawSource || source)
+        : (readNativeFirst(parsed, ['WOAS', 'WXXX', 'TXXX:url']) || source);
+      return { title, artist, album, composer, lyricist, year, trackNo, genre, lyrics, note, source, rawTIT2, rawTPE1, rawTCOM, rawTEXT, rawTCON, rawUSLT, rawCOMM, rawWOAS };
+    };
+
+    const resolved = computeResolved(null);
+    const { title, artist, album, composer, lyricist, year, trackNo, genre, lyrics, note, source, rawTIT2, rawTPE1, rawTCOM, rawTEXT, rawTCON, rawUSLT, rawCOMM, rawWOAS } = resolved;
+
+    // 后台异步补跑 ffprobe：编辑器已用 music-metadata + NodeID3 秒出，
+    // 若 ffprobe 能补充导入时缺失的标签，再以差量推回渲染进程合并（不阻塞、不误标 dirty）。
+    if (ext === '.wav') {
+      enqueueWavProbe(() => probeWavTags(filePath).then((wavTags) => {
+        if (!wavTags) return;
+        const full = computeResolved(wavTags);
+        const patch = {};
+        for (const key of Object.keys(full)) {
+          const cur = String(resolved[key] ?? '').trim();
+          const nextVal = String(full[key] ?? '').trim();
+          if (nextVal && nextVal !== cur) patch[key] = full[key];
+        }
+        if (!Object.keys(patch).length) return;
+        if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+        mainWindowRef.webContents.send('wav-tags-resolved', { path: filePath, tags: patch });
+      }));
+    }
 
     return {
       id: filePath,
       path: filePath,
       fileName: path.basename(filePath),
       format,
-      title: resolvedTitle,
-      artist: resolvedArtist,
-      album: resolvedAlbum,
-      composer: resolvedComposer,
-      lyricist: resolvedLyricist,
-      year: resolvedYear,
-      genre: resolvedGenre,
-      lyrics: resolvedLyrics,
-      note: resolvedNote,
-      trackNo: resolvedTrackNo,
-      source: resolvedSource,
+      title,
+      artist,
+      album,
+      composer,
+      lyricist,
+      year,
+      genre,
+      lyrics,
+      note,
+      trackNo,
+      source,
       rawTIT2,
       rawTPE1,
       rawTCOM,
@@ -954,7 +1004,7 @@ async function readMetadata(filePath) {
       coverPath: '',
       exportedPath: '',
       removeCover: false,
-      rawAttributes: buildRawAttributes(parsed, stat, filePath, resolvedSource),
+      rawAttributes: buildRawAttributes(parsed, stat, filePath, source),
       dirty: false,
       status: 'clean',
       errorMessage: ''

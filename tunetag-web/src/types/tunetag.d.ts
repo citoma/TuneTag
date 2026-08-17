@@ -78,6 +78,8 @@ declare global {
       onSaveProgress: (callback: (payload: { completed: number; total: number }) => void) => () => void;
       getInitialOpenPaths: () => string[];
       onExternalOpenPaths: (callback: (paths: string[]) => void) => () => void;
+      // 后台 ffprobe 解析完成后，主进程把补充到的 WAV 标签差量推回渲染进程合并。
+      onWavTagsResolved: (callback: (payload: { path: string; tags: Partial<Track> }) => void) => () => void;
     };
   }
 }
