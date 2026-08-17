@@ -786,11 +786,26 @@ function readWavId3Tags(filePath) {
   }
 }
 
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function readWhereFroms(filePath) {
   if (process.platform !== 'darwin') return '';
+  // Spotlight 未索引 / 外接盘 / 刚下载未建索引的文件上，mdls 可能卡数秒。
+  // 加硬超时，卡住就跳过“来源”，不让它阻塞歌曲加载。
+  const MDLS_TIMEOUT_MS = 500;
   try {
-    const { stdout } = await runProcess('mdls', ['-raw', '-name', 'kMDItemWhereFroms', filePath]);
-    const raw = String(stdout || '').trim();
+    const result = await withTimeout(
+      runProcess('mdls', ['-raw', '-name', 'kMDItemWhereFroms', filePath]),
+      MDLS_TIMEOUT_MS
+    );
+    if (!result || result.timedOut) return '';
+    const raw = String(result.stdout || '').trim();
     if (!raw || raw === '(null)') return '';
     const quoted = raw.match(/"([^"]+)"/u);
     if (quoted?.[1]) return normalizeTagText(quoted[1]);

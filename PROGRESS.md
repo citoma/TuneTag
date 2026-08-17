@@ -16,7 +16,11 @@
   - 重建并打包 `release/TuneTag.dmg`（arm64，174 MB，签名 runtime）。
   - `gh release create 1.5.1 ... --latest` 已发布，资产 `TuneTag.dmg`，`latest/download/TuneTag.dmg` 可正常重定向下载。
   - 官网 `website/index.html` 下载链直连 `latest/download/TuneTag.dmg`，无需改文案重部署即自动生效。
-  - 本地 `/Applications/TuneTag.app` 已同步覆盖为 1.5.1 构建。
+  - 本地 `/Applications/TuneTag.app` 已同步覆盖为 1.5.1 构建（flags=0x10002 runtime）。
+- **性能修复：限制 `mdls`（`readWhereFroms`）超时，避免歌曲加载卡顿**
+  - 现象：右键打开歌曲时 App 冷启动，且部分文件（Spotlight 未索引/外接盘/刚下载未建索引）上 `mdls` 查询可能卡数秒，而该调用此前串在 `readMetadata` 主链路（`await`），会阻塞整首歌加载。
+  - 实测单文件元数据读取约 60ms（parseFile 11ms + mdls 44ms + stat），本身不慢；卡顿来自 mdls 偶发卡住。
+  - 修复：`main.mjs` 新增 `withTimeout`，给 `readWhereFroms` 的 `mdls` 调用套 ~500ms 硬超时，超时即跳过“来源”字段，歌曲立即出来。已重建打包并覆盖 `/Applications`（仍 1.5.1）。
 - **macOS 26（Apple Silicon）启动闪退修复并发布 v1.5.0**
   - 根因（已用 `~/Library/Logs/DiagnosticReports/*.ips` 崩溃报告确认）：Chromium 辅助进程（GPU/工具进程）沙箱限制 V8 的 JIT 可执行内存映射，helper 进程在 `v8::V8::EnableWebAssemblyTrapHandler` 初始化时触发 `EXC_BREAKPOINT`/`SIGTRAP` 崩溃；主进程不受沙箱隔离故正常。此前 entitlement/Hardened Runtime 推断为误诊（签名与 runtime 均有效）。
   - 修复：`main.mjs` 启动早期 `app.commandLine.appendSwitch('no-sandbox')` + `disable-gpu-sandbox`。
@@ -28,7 +32,7 @@
 
 ### 仓库一致性
 - `git status` 干净，已推送至 `origin/main`，最新提交 `3533f59`（版本号 1.5.1）。
-- 本地构建产物：`tunetag-web/release/TuneTag.dmg`（arm64，174 MB，含右键跳过首页 + no-sandbox 修复，签名 runtime）。
+- 本地构建产物：`tunetag-web/release/TuneTag.dmg`（arm64，174 MB，含右键跳过首页 + no-sandbox + mdls 超时修复，签名 runtime）。
 - 线上：`GitHub Release 1.5.1`（Latest）+ 官网 `latest/download/TuneTag.dmg` 已生效。
 
 ## 下一步
