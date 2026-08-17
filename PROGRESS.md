@@ -11,6 +11,12 @@
   - 修复：启动 `loadFile` 时把 `pendingOpenPaths` 透传为 `query { open }` → `preload.cjs` 新增 `getInitialOpenPaths()` 暴露 → `App.tsx` 首屏即按 `bootPaths` 判定已进入工作区并立即 `importPaths`。
   - 四文件改动（main.mjs / preload.cjs / App.tsx / types/tunetag.d.ts）已提交 `73d84a3` 并推送 `origin/main`。
   - 本地 `/Applications/TuneTag.app` 已覆盖为含修复的 1.5.0 构建（flags=0x10002 含 runtime），已解包 asar 验证修复代码确在包内。
+- **发布 GitHub Release 1.5.1（Latest）**
+  - 版本号 `1.5.0 → 1.5.1`（package.json，提交 `3533f59`）。
+  - 重建并打包 `release/TuneTag.dmg`（arm64，174 MB，签名 runtime）。
+  - `gh release create 1.5.1 ... --latest` 已发布，资产 `TuneTag.dmg`，`latest/download/TuneTag.dmg` 可正常重定向下载。
+  - 官网 `website/index.html` 下载链直连 `latest/download/TuneTag.dmg`，无需改文案重部署即自动生效。
+  - 本地 `/Applications/TuneTag.app` 已同步覆盖为 1.5.1 构建。
 - **macOS 26（Apple Silicon）启动闪退修复并发布 v1.5.0**
   - 根因（已用 `~/Library/Logs/DiagnosticReports/*.ips` 崩溃报告确认）：Chromium 辅助进程（GPU/工具进程）沙箱限制 V8 的 JIT 可执行内存映射，helper 进程在 `v8::V8::EnableWebAssemblyTrapHandler` 初始化时触发 `EXC_BREAKPOINT`/`SIGTRAP` 崩溃；主进程不受沙箱隔离故正常。此前 entitlement/Hardened Runtime 推断为误诊（签名与 runtime 均有效）。
   - 修复：`main.mjs` 启动早期 `app.commandLine.appendSwitch('no-sandbox')` + `disable-gpu-sandbox`。
@@ -21,8 +27,9 @@
 - 提交并推送：`43a0ef1`（main.mjs / package.json / website/index.html）至 `origin/main`。
 
 ### 仓库一致性
-- `git status` 干净，已推送至 `origin/main`，最新提交 `73d84a3`（右键打开修复）。
-- 本地构建产物：`tunetag-web/release/TuneTag-darwin-arm64/TuneTag.app`（含 no-sandbox + 右键跳过首页修复，签名 runtime）。
+- `git status` 干净，已推送至 `origin/main`，最新提交 `3533f59`（版本号 1.5.1）。
+- 本地构建产物：`tunetag-web/release/TuneTag.dmg`（arm64，174 MB，含右键跳过首页 + no-sandbox 修复，签名 runtime）。
+- 线上：`GitHub Release 1.5.1`（Latest）+ 官网 `latest/download/TuneTag.dmg` 已生效。
 
 ## 下一步
 1. ~~**官网部署（Cloudflare Pages）**：tunetag.keecheer.com 为独立 Cloudflare Pages 项目 `tunetag`（Git Provider: No，无 git 联动，靠 `wrangler pages deploy` 上传）。已用 wrangler 将本地 `website/` 部署上线，线上文案已从「约 150 MB」更新为「约 180 MB」（部署 ID 229fd3cb，HTTP 200 验证通过）。~~ ✅ 已完成。
