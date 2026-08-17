@@ -745,7 +745,7 @@ function readWavId3Tags(filePath) {
       artist: normalizeTagText(parsed?.artist),
       album: normalizeTagText(parsed?.album),
       composer: normalizeTagText(parsed?.composer),
-      lyricist: normalizeTagText(parsed?.lyricist),
+      lyricist: normalizeTagText(parsed?.lyricist) || normalizeTagText(parsed?.textWriter),
       year: normalizeTagText(parsed?.year),
       trackNo: normalizeTagText(parsed?.trackNumber),
       genre: normalizeTagText(parsed?.genre),
@@ -755,7 +755,7 @@ function readWavId3Tags(filePath) {
       rawTitle: normalizeTagText(parsed?.raw?.TIT2),
       rawArtist: normalizeTagText(parsed?.raw?.TPE1),
       rawComposer: normalizeTagText(parsed?.raw?.TCOM),
-      rawLyricist: normalizeTagText(parsed?.raw?.TEXT),
+      rawLyricist: normalizeTagText(parsed?.raw?.TEXT) || normalizeTagText(parsed?.raw?.textWriter),
       rawGenre: normalizeTagText(parsed?.raw?.TCON),
       rawLyrics: normalizeTagText(parsed?.raw?.USLT?.text || ''),
       rawComment: normalizeTagText(parsed?.raw?.COMM?.text || ''),
@@ -1230,6 +1230,116 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   }
 }
 
+// 从 WAV buffer 中移除指定 fourcc 的 RIFF chunk（用于避免重复写入 ID3 chunk）。
+function removeRiffChunk(buffer, fourcc) {
+  if (buffer.length < 12 || buffer.slice(0, 4).toString('ascii') !== 'RIFF') {
+    return buffer;
+  }
+  const out = [buffer.slice(0, 12)];
+  let pos = 12;
+  while (pos + 8 <= buffer.length) {
+    const id = buffer.slice(pos, pos + 4).toString('ascii');
+    const size = buffer.readUInt32LE(pos + 4);
+    const chunkDataSize = size + (size % 2); // RIFF chunk 偶数对齐
+    const next = pos + 8 + chunkDataSize;
+    if (id === fourcc) {
+      pos = next;
+      continue;
+    }
+    out.push(buffer.slice(pos, next));
+    pos = next;
+  }
+  const merged = Buffer.concat(out);
+  merged.writeUInt32LE(merged.length - 8, 4);
+  return merged;
+}
+
+// 组装写入 WAV ID3 chunk 的标签对象。
+// 注意：NodeID3 v0.2.9 的 `lyricist` 属性不会生成 TEXT 帧（被静默丢弃），
+// 词作者必须用 `textWriter`（映射到 TEXT 帧）。composer 则正常映射到 TCOM。
+function buildId3Tags(item) {
+  const tags = {
+    title: normalizeTagText(item.title) || undefined,
+    artist: normalizeTagText(item.artist) || undefined,
+    album: normalizeTagText(item.album) || undefined,
+    composer: normalizeTagText(item.composer) || undefined,
+    textWriter: normalizeTagText(item.lyricist) || undefined,
+    genre: normalizeTagText(item.genre) || undefined,
+    year: normalizeTagText(item.year) || undefined,
+    trackNumber: normalizeTagText(item.trackNo) || undefined,
+    audioSourceUrl: normalizeTagText(item.source) || undefined
+  };
+  if (item.lyrics) {
+    tags.unsynchronisedLyrics = { language: 'eng', text: normalizeTagText(item.lyrics) };
+  }
+  if (item.note) {
+    tags.comment = { language: 'eng', text: normalizeTagText(item.note) };
+  }
+  return tags;
+}
+
+// WAV 标签写入：用 ffmpeg 重封装（剥离旧 metadata，保留 RIFF 结构），
+// 同时把完整 UTF-16 标签写成 "ID3 " RIFF chunk 注入，解决 RIFF INFO 对 CJK 乱码、
+// 以及 NodeID3.update 直接写会破坏 RIFF 头的问题。
+async function writeWavMetadataWithId3Chunk(item, targetPath) {
+  const ffmpegExecutablePath = await getFfmpegExecutablePath();
+  const tempPath = buildTempOutputPath(targetPath);
+
+  const buildArgs = (forcePcm) => {
+    const args = [
+      '-y',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      item.path,
+      '-map',
+      '0:a:0',
+      '-map_metadata',
+      '-1'
+    ];
+    // RIFF INFO：ascii 安全，作为广泛兼容的基础标签（不含 CJK，避免乱码）。
+    for (const [key, value] of buildMetadataEntries(item, '.wav')) {
+      args.push('-metadata', `${key}=${value}`);
+    }
+    if (forcePcm) {
+      args.push('-c:a', 'pcm_s16le');
+    } else {
+      args.push('-c', 'copy');
+    }
+    args.push(tempPath);
+    return args;
+  };
+
+  try {
+    await runProcess(ffmpegExecutablePath, buildArgs(false));
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    try {
+      await runProcess(ffmpegExecutablePath, buildArgs(true));
+    } catch (retryError) {
+      await fs.rm(tempPath, { force: true }).catch(() => {});
+      throw retryError;
+    }
+  }
+
+  // 注入 "ID3 " RIFF chunk（含完整 UTF-16 标签，包括中文词曲作者）。
+  let buffer = await fs.readFile(tempPath);
+  buffer = removeRiffChunk(buffer, 'ID3 ');
+  const id3 = NodeID3.create(buildId3Tags(item));
+  const chunkHeader = Buffer.from('ID3 ');
+  const chunkSize = Buffer.alloc(4);
+  chunkSize.writeUInt32LE(id3.length, 0);
+  let chunk = Buffer.concat([chunkHeader, chunkSize, id3]);
+  if (id3.length % 2 === 1) {
+    chunk = Buffer.concat([chunk, Buffer.from([0x00])]); // RIFF chunk 偶数对齐
+  }
+  const newBuffer = Buffer.concat([buffer.slice(0, 12), chunk, buffer.slice(12)]);
+  newBuffer.writeUInt32LE(newBuffer.length - 8, 4); // 更新 RIFF 总长
+  await fs.writeFile(tempPath, newBuffer);
+  await replaceFileFromTemp(tempPath, targetPath);
+}
+
 async function writeMp3WithNodeId3ToTarget(item, targetPath) {
   const tempPath = buildTempOutputPath(targetPath);
   if (item.removeCover) {
@@ -1259,7 +1369,8 @@ async function writeMp3WithNodeId3ToTarget(item, targetPath) {
     artist: normalizeTagText(item.artist || item.rawTPE1) || undefined,
     album: normalizeTagText(item.album) || undefined,
     composer: normalizeTagText(item.composer || item.rawTCOM) || undefined,
-    lyricist: normalizeTagText(item.lyricist || item.rawTEXT) || undefined,
+    // NodeID3 v0.2.9 用 `textWriter` 才会生成 TEXT（词作者）帧；`lyricist` 会被静默丢弃。
+    textWriter: normalizeTagText(item.lyricist || item.rawTEXT) || undefined,
     year: normalizeTagText(item.year) || undefined,
     genre: normalizeTagText(item.genre || item.rawTCON) || undefined,
     trackNumber: normalizeTagText(item.trackNo) || undefined,
@@ -1539,6 +1650,8 @@ ipcMain.handle('save-tracks', async (event, tracks) => {
     try {
       if (ext === '.mp3') {
         await writeMp3WithNodeId3ToTarget(item, outputPath);
+      } else if (ext === '.wav') {
+        await writeWavMetadataWithId3Chunk(item, outputPath);
       } else {
         await writeMetadataWithFfmpegToTarget(item, outputPath);
       }
