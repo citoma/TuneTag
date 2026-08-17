@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import type { Track } from './types/tunetag';
 import {
@@ -27,6 +27,7 @@ import PresetNameModal from './components/PresetNameModal';
 
 export default function App() {
   const api = window.tunetag;
+  const [bootPaths] = useState<string[]>(() => (api && typeof api.getInitialOpenPaths === 'function' ? api.getInitialOpenPaths() : []));
   const isMac = navigator.userAgent.toLowerCase().includes('mac');
   const {
     tracks,
@@ -154,7 +155,7 @@ export default function App() {
   const dirtyCount = tracks.filter((t) => t.dirty).length;
   const hasBatchInput = hasAnyBatchValue(batchForm);
   const canSave = selectedTracks.length > 1 ? hasBatchInput && !saving : dirtyCount > 0 && !saving;
-  const hasImported = tracks.length > 0;
+  const hasImported = tracks.length > 0 || bootPaths.length > 0;
 
   useEffect(() => {
     if (!api) return;
@@ -204,6 +205,14 @@ export default function App() {
     });
     return unsubscribe;
   }, [api, importPaths]);
+
+  const bootImportedRef = useRef(false);
+  useEffect(() => {
+    if (bootImportedRef.current) return;
+    if (!bootPaths.length) return;
+    bootImportedRef.current = true;
+    importPaths(bootPaths).catch(() => {});
+  }, [bootPaths, importPaths]);
 
   async function onLandingBrandClick() {
     const target = 'https://fengsound.top/';

@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('tunetag', {
     ipcRenderer.on('save-progress', handler);
     return () => ipcRenderer.removeListener('save-progress', handler);
   },
+  getInitialOpenPaths: () => {
+    try {
+      const raw = new URLSearchParams(window.location.search).get('open');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
   onExternalOpenPaths: (callback) => {
     const handler = (_event, paths) => callback(Array.isArray(paths) ? paths : []);
     ipcRenderer.on('external-open-paths', handler);

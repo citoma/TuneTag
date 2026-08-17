@@ -205,6 +205,7 @@ function createWindow() {
   });
   mainWindowRef = mainWindow;
   allowWindowClose = false;
+  const bootPaths = pendingOpenPaths.splice(0, pendingOpenPaths.length);
 
   mainWindow.on('close', async (event) => {
     if (allowWindowClose) return;
@@ -304,7 +305,7 @@ function createWindow() {
     throw new Error(`未找到生产构建文件: ${prodPath}`);
   }
 
-  mainWindow.loadFile(prodPath);
+  mainWindow.loadFile(prodPath, { query: { open: JSON.stringify(bootPaths) } });
   mainWindow.webContents.on('did-finish-load', () => {
     flushPendingOpenPaths();
   });

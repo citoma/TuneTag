@@ -76,6 +76,7 @@ declare global {
         exported: Array<{ sourcePath: string; outputPath: string }>;
       }>;
       onSaveProgress: (callback: (payload: { completed: number; total: number }) => void) => () => void;
+      getInitialOpenPaths: () => string[];
       onExternalOpenPaths: (callback: (paths: string[]) => void) => () => void;
     };
   }
