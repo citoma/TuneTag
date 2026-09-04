@@ -2,7 +2,7 @@
   "name": "tunetag-web",
   "productName": "TuneTag",
   "private": true,
-  "version": "1.5.2",
+  "version": "1.5.3",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {

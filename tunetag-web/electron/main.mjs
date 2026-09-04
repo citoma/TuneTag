@@ -1166,6 +1166,85 @@ function buildMetadataEntries(item, ext) {
   ];
 }
 
+// ---- M4A / MP4 自定义 iTunes 原子注入 ----
+// ffmpeg 的 MP4 muxer 会静默丢弃转换表里没有的元数据键（如 `lyricist`、`source`）。
+// 在 ffmpeg `-c copy` 之后，仅对 `.m4a` 把这两个字段注入为 iTunes 自定义 `----` 原子
+// （mean=com.apple.iTunes），music-metadata 才能把它们读回（LYRICIST→lyricist，SOURCE→source）。
+async function injectMp4CustomAtoms(filePath, entries) {
+  if (!entries.length) return;
+  const buf = await fs.readFile(filePath);
+  const moov = findMp4Box(buf, 'moov', 0, buf.length);
+  if (!moov) throw new Error('M4A: 找不到 moov 盒子');
+  const meta = findMp4Box(buf, 'meta', moov.off, moov.off + moov.size);
+  if (!meta) throw new Error('M4A: 找不到 meta 盒子');
+  const ilst = findMp4Box(buf, 'ilst', meta.off, meta.off + meta.size);
+  if (!ilst) throw new Error('M4A: 找不到 ilst 盒子');
+
+  const newAtoms = Buffer.concat(entries.map(([name, value]) => buildITunesCustomAtom(name, value)));
+  const ilstEnd = ilst.off + ilst.size;
+  const out = Buffer.concat([buf.subarray(0, ilstEnd), newAtoms, buf.subarray(ilstEnd)]);
+
+  const delta = newAtoms.length;
+  // ffmpeg 产出的 M4A 中 moov 是最后一个顶层盒子，增长它不会移动 mdat，音频偏移安全。
+  // 更新祖先链尺寸：ilst -> meta -> udta -> moov。
+  out.writeUInt32BE(ilst.size + delta, ilst.off);
+  out.writeUInt32BE(meta.size + delta, meta.off);
+  const udta = findMp4Box(buf, 'udta', moov.off, moov.off + moov.size);
+  if (udta) out.writeUInt32BE(udta.size + delta, udta.off);
+  out.writeUInt32BE(moov.size + delta, moov.off);
+  await fs.writeFile(filePath, out);
+}
+
+function findMp4Box(buf, type, start, end) {
+  const containers = ['moov', 'trak', 'udta', 'minf', 'stbl', 'mdia', 'ilst', 'meta', 'edts', 'dinf', 'mvex'];
+  let off = start;
+  while (off + 8 <= end) {
+    const size = buf.readUInt32BE(off);
+    const t = buf.toString('ascii', off + 4, off + 8);
+    if (t === type) return { off, size };
+    if (size < 8) break;
+    const childStart = off + 8;
+    const childEnd = off + size;
+    if (containers.includes(t)) {
+      let cs = childStart;
+      if (t === 'meta') cs = childStart + 4; // 跳过 version/flags
+      const found = findMp4Box(buf, type, cs, childEnd);
+      if (found) return found;
+    }
+    off += size;
+  }
+  return null;
+}
+
+function boxWithSize(type, payload) {
+  const size = 8 + payload.length;
+  const head = Buffer.alloc(8);
+  head.writeUInt32BE(size, 0);
+  head.write(type, 4, 'ascii');
+  return Buffer.concat([head, payload]);
+}
+
+function buildITunesCustomAtom(name, value) {
+  // mean: version/flags(4) + 'com.apple.iTunes'
+  const meanPayload = Buffer.concat([Buffer.from([0, 0, 0, 0]), Buffer.from('com.apple.iTunes', 'utf8')]);
+  // name: version/flags(4) + <name>
+  const namePayload = Buffer.concat([Buffer.from([0, 0, 0, 0]), Buffer.from(name, 'utf8')]);
+  // data: version(1)=0 + flags(3)=type 1 (UTF-8) + locale(4)=0 + value
+  // 注意：music-metadata 的 DataAtom 把 value 放在 payload 偏移 8 处，
+  // 因此 data 头必须是 8 字节（version1 + flags3 + locale4），而非 12 字节标准布局。
+  const dataPayload = Buffer.concat([
+    Buffer.from([0, 0, 0, 1]),
+    Buffer.from([0, 0, 0, 0]),
+    Buffer.from(value, 'utf8')
+  ]);
+  const inner = Buffer.concat([
+    boxWithSize('mean', meanPayload),
+    boxWithSize('name', namePayload),
+    boxWithSize('data', dataPayload)
+  ]);
+  return boxWithSize('----', inner);
+}
+
 async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   const ffmpegExecutablePath = await getFfmpegExecutablePath();
 
@@ -1212,6 +1291,20 @@ async function writeMetadataWithFfmpegToTarget(item, targetPath) {
   const tempPath = buildTempOutputPath(targetPath);
   try {
     await runProcess(ffmpegExecutablePath, buildArgs(tempPath, false));
+    if (ext === '.m4a') {
+      const customEntries = [];
+      const lyr = normalizeTagText(item.lyricist || item.rawTEXT);
+      if (lyr) customEntries.push(['LYRICIST', lyr]);
+      const src = normalizeTagText(item.source || item.rawWOAS);
+      if (src) customEntries.push(['SOURCE', src]);
+      if (customEntries.length) {
+        try {
+          await injectMp4CustomAtoms(tempPath, customEntries);
+        } catch (injectErr) {
+          console.error('[tunetag] M4A 自定义原子注入失败（保留标准字段）:', injectErr);
+        }
+      }
+    }
     await replaceFileFromTemp(tempPath, targetPath);
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => {});
